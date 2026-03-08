@@ -35,34 +35,34 @@ public class ShopBlockEntity extends BlockEntity {
     // Render positions for group 1 (elements 37-48)
     // X/Z = center of each shelf element; Y = shelf top + 0.175 (half item visual height at scale 0.35)
     public static final float[][] GROUP1_POSITIONS = {
-            {3f/16, 13.8f/16, 2.9f/16},
-            {6f/16, 13.8f/16, 2.9f/16},
-            {9f/16, 13.8f/16, 2.9f/16},
-            {3f/16, 12.3f/16, 5.9f/16},
-            {6f/16, 12.3f/16, 5.9f/16},
-            {9f/16, 12.3f/16, 5.9f/16},
-            {9f/16, 10.8f/16, 8.9f/16},
-            {3f/16, 10.8f/16, 9f/16},
-            {6f/16, 10.8f/16, 9f/16},
-            {3f/16, 9.4f/16, 12f/16},
-            {6f/16, 9.4f/16, 12f/16},
-            {9f/16, 9.4f/16, 12f/16}
+            {3f/16, 13.8f/16, 3.7f/16},
+            {6f/16, 13.8f/16, 3.7f/16},
+            {9f/16, 13.8f/16, 3.7f/16},
+            {3f/16, 12.3f/16, 6.7f/16},
+            {6f/16, 12.3f/16, 6.7f/16},
+            {9f/16, 12.3f/16, 6.7f/16},
+            {9f/16, 10.8f/16, 9.7f/16},
+            {3f/16, 10.8f/16, 9.7f/16},
+            {6f/16, 10.8f/16, 9.7f/16},
+            {3f/16, 9.4f/16, 12.7f/16},
+            {6f/16, 9.4f/16, 12.7f/16},
+            {9f/16, 9.4f/16, 12.7f/16}
     };
 
     // Render positions for group 2 (elements 49-60)
     public static final float[][] GROUP2_POSITIONS = {
-            {14f/16, 13.8f/16, 2.9f/16},
-            {17f/16, 13.8f/16, 2.9f/16},
-            {20f/16, 13.8f/16, 2.9f/16},
-            {14f/16, 12.3f/16, 5.9f/16},
-            {17f/16, 12.3f/16, 5.9f/16},
-            {20f/16, 12.3f/16, 5.9f/16},
-            {20f/16, 10.8f/16, 8.9f/16},
-            {14f/16, 10.8f/16, 9f/16},
-            {17f/16, 10.8f/16, 9f/16},
-            {14f/16, 9.4f/16, 12f/16},
-            {17f/16, 9.4f/16, 12f/16},
-            {20f/16, 9.4f/16, 12f/16}
+            {14f/16, 13.8f/16, 3.7f/16},
+            {17f/16, 13.8f/16, 3.7f/16},
+            {20f/16, 13.8f/16, 3.7f/16},
+            {14f/16, 12.3f/16, 6.7f/16},
+            {17f/16, 12.3f/16, 6.7f/16},
+            {20f/16, 12.3f/16, 6.7f/16},
+            {20f/16, 10.8f/16, 9.7f/16},
+            {14f/16, 10.8f/16, 9.7f/16},
+            {17f/16, 10.8f/16, 9.7f/16},
+            {14f/16, 9.4f/16, 12.7f/16},
+            {17f/16, 9.4f/16, 12.7f/16},
+            {20f/16, 9.4f/16, 12.7f/16}
     };
 
     // Size of each render slot (in block units) for hit detection
@@ -264,60 +264,79 @@ public class ShopBlockEntity extends BlockEntity {
         }
     }
 
-    public int getClickedSlot(Vec3 hitPos, BlockState state) {
-        double hx = hitPos.x - worldPosition.getX();
-        double hy = hitPos.y - worldPosition.getY();
-        double hz = hitPos.z - worldPosition.getZ();
+    public int getClickedSlot(Vec3 eyePos, Vec3 lookDir, BlockState state) {
+        // Transform eye position to model space (relative to origin, NORTH-facing)
+        double ex = eyePos.x - worldPosition.getX();
+        double ey = eyePos.y - worldPosition.getY();
+        double ez = eyePos.z - worldPosition.getZ();
 
-        // Rotate hit coordinates into NORTH-facing model space
         Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
-        double mx, mz;
+
+        // Rotate eye position and look direction into NORTH-facing model space
+        double mex, mez, mdx, mdz;
         switch (facing) {
-            case SOUTH -> { mx = 1.0 - hx; mz = 1.0 - hz; }
-            case WEST -> { mx = hz; mz = 1.0 - hx; }
-            case EAST -> { mx = 1.0 - hz; mz = hx; }
-            default -> { mx = hx; mz = hz; }
+            case SOUTH -> { mex = 1.0 - ex; mez = 1.0 - ez; mdx = -lookDir.x; mdz = -lookDir.z; }
+            case WEST  -> { mex = 1.0 - ez; mez = ex;        mdx = -lookDir.z; mdz = lookDir.x; }
+            case EAST  -> { mex = ez;        mez = 1.0 - ex;  mdx = lookDir.z;  mdz = -lookDir.x; }
+            default    -> { mex = ex;        mez = ez;        mdx = lookDir.x;  mdz = lookDir.z; }
+        }
+        double mdy = lookDir.y;
+
+        // Check tendedero: cast ray to the tendedero center plane
+        float tcx = (TENDEDERO_MIN[0] + TENDEDERO_MAX[0]) / 2f;
+        float tcy = (TENDEDERO_MIN[1] + TENDEDERO_MAX[1]) / 2f;
+        float tcz = (TENDEDERO_MIN[2] + TENDEDERO_MAX[2]) / 2f;
+        // Find t where ray reaches tendedero Z center
+        if (Math.abs(mdz) > 1e-6) {
+            double t = (tcz - mez) / mdz;
+            if (t > 0) {
+                double ix = mex + mdx * t;
+                double iy = ey + mdy * t;
+                if (ix >= TENDEDERO_MIN[0] && ix <= TENDEDERO_MAX[0] &&
+                        iy >= TENDEDERO_MIN[1] && iy <= TENDEDERO_MAX[1]) {
+                    return -2;
+                }
+            }
         }
 
-        // Check tendedero area (register/checkout)
-        if (mx >= TENDEDERO_MIN[0] && mx <= TENDEDERO_MAX[0] &&
-                hy >= TENDEDERO_MIN[1] && hy <= TENDEDERO_MAX[1] &&
-                mz >= TENDEDERO_MIN[2] && mz <= TENDEDERO_MAX[2]) {
-            return -2;
-        }
+        // For each slot, find the closest point on the ray to the slot center
+        // using full 3D distance: ray P(t) = eye + t*dir
+        // t_closest = dot(slotPos - eye, dir) / dot(dir, dir)
+        double dirDot = mdx * mdx + mdy * mdy + mdz * mdz;
+        if (dirDot < 1e-10) return -1;
 
-        // Find nearest shelf slot using 2D distance (model X and world Y)
         int bestSlot = -1;
         double bestDist = Double.MAX_VALUE;
-        double maxDist = 4.0 / 16.0;
+        double maxDist = 3.5 / 16.0; // max perpendicular distance to slot center
 
         for (int i = 0; i < SLOTS_PER_GROUP; i++) {
-            float[] pos = GROUP1_POSITIONS[i];
-            double dx = mx - pos[0];
-            double dy = hy - pos[1];
-            double dist = dx * dx + dy * dy;
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestSlot = i;
-            }
+            double dist = rayToSlotDist(mex, ey, mez, mdx, mdy, mdz, dirDot, GROUP1_POSITIONS[i]);
+            if (dist < bestDist) { bestDist = dist; bestSlot = i; }
         }
 
         for (int i = 0; i < SLOTS_PER_GROUP; i++) {
-            float[] pos = GROUP2_POSITIONS[i];
-            double dx = mx - pos[0];
-            double dy = hy - pos[1];
-            double dist = dx * dx + dy * dy;
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestSlot = SLOTS_PER_GROUP + i;
-            }
+            double dist = rayToSlotDist(mex, ey, mez, mdx, mdy, mdz, dirDot, GROUP2_POSITIONS[i]);
+            if (dist < bestDist) { bestDist = dist; bestSlot = SLOTS_PER_GROUP + i; }
         }
 
-        if (bestSlot >= 0 && bestDist <= maxDist * maxDist) {
+        if (bestSlot >= 0 && bestDist <= maxDist) {
             return bestSlot;
         }
 
         return -1;
+    }
+
+    private static double rayToSlotDist(double ex, double ey, double ez,
+                                         double dx, double dy, double dz, double dirDot,
+                                         float[] slotPos) {
+        double sx = slotPos[0], sy = slotPos[1], sz = slotPos[2];
+        double diffX = sx - ex, diffY = sy - ey, diffZ = sz - ez;
+        double t = (diffX * dx + diffY * dy + diffZ * dz) / dirDot;
+        if (t < 0) return Double.MAX_VALUE; // behind the player
+        double px = ex + dx * t - sx;
+        double py = ey + dy * t - sy;
+        double pz = ez + dz * t - sz;
+        return Math.sqrt(px * px + py * py + pz * pz);
     }
 
     public void setSlotItem(int index, ItemStack item) {

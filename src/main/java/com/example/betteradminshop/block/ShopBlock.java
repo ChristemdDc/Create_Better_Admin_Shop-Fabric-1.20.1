@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
@@ -24,9 +25,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.level.block.state.properties.DirectionProperty;
+import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 
@@ -35,48 +38,123 @@ import java.util.Map;
 public class ShopBlock extends BaseEntityBlock {
 
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
+    public static final EnumProperty<ShopPart> PART = EnumProperty.create("part", ShopPart.class);
 
-    private static final VoxelShape SHAPE_NORTH;
-    private static final VoxelShape SHAPE_SOUTH;
-    private static final VoxelShape SHAPE_WEST;
-    private static final VoxelShape SHAPE_EAST;
+    private static final VoxelShape FULL_BLOCK = Block.box(0, 0, 0, 16, 16, 16);
+
+    // Precomputed outline shapes: OUTLINE_SHAPES[facingIndex][partOrdinal]
+    // Each part returns the full multi-block structure shape offset to its own position.
+    private static final VoxelShape[][] OUTLINE_SHAPES = new VoxelShape[4][4];
 
     static {
-        // 1 block wide (X), 2 blocks tall (Y), 2 blocks long (Z) per facing
-        SHAPE_NORTH = Block.box(0, 0,  0, 16, 32, 32);
-        SHAPE_SOUTH = Block.box(0, 0,-16, 16, 32, 16);
-        SHAPE_WEST  = Block.box(-16, 0, 0, 16, 32, 16);
-        SHAPE_EAST  = Block.box(0, 0,  0, 32, 32, 16);
+        // Model in NORTH pixel coords: main body (0,0,0)→(32,32,16), extension (16,0,-12)→(32,32,0)
+        double[][] modelBoxes = {
+                {0, 0, 0, 32, 32, 16},
+                {16, 0, -12, 32, 32, 0}
+        };
+
+        Direction[] facings = {Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST};
+        for (int fi = 0; fi < 4; fi++) {
+            Direction facing = facings[fi];
+            for (ShopPart part : ShopPart.values()) {
+                BlockPos partOffset = part.getOffsetFromOrigin(facing);
+                double ox = partOffset.getX() * 16.0;
+                double oy = partOffset.getY() * 16.0;
+                double oz = partOffset.getZ() * 16.0;
+
+                VoxelShape shape = Shapes.empty();
+                for (double[] box : modelBoxes) {
+                    double[] r1 = rotateXZ(box[0], box[2], facing);
+                    double[] r2 = rotateXZ(box[3], box[5], facing);
+
+                    double x1 = Math.max(-16, Math.min(r1[0], r2[0]) - ox);
+                    double z1 = Math.max(-16, Math.min(r1[1], r2[1]) - oz);
+                    double x2 = Math.min(32, Math.max(r1[0], r2[0]) - ox);
+                    double z2 = Math.min(32, Math.max(r1[1], r2[1]) - oz);
+                    double y1 = Math.max(-16, box[1] - oy);
+                    double y2 = Math.min(32, box[4] - oy);
+
+                    if (x2 > x1 && y2 > y1 && z2 > z1) {
+                        shape = Shapes.or(shape, Block.box(x1, y1, z1, x2, y2, z2));
+                    }
+                }
+                OUTLINE_SHAPES[fi][part.ordinal()] = shape;
+            }
+        }
+    }
+
+    private static double[] rotateXZ(double x, double z, Direction facing) {
+        return switch (facing) {
+            case SOUTH -> new double[]{16 - x, 16 - z};
+            case EAST -> new double[]{16 - z, x};
+            case WEST -> new double[]{z, 16 - x};
+            default -> new double[]{x, z};
+        };
+    }
+
+    private static int facingIndex(Direction facing) {
+        return switch (facing) {
+            case SOUTH -> 1;
+            case EAST -> 2;
+            case WEST -> 3;
+            default -> 0;
+        };
     }
 
     public ShopBlock(Properties properties) {
         super(properties);
-        registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+        registerDefaultState(stateDefinition.any()
+                .setValue(FACING, Direction.NORTH)
+                .setValue(PART, ShopPart.ORIGIN));
     }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(FACING);
+        builder.add(FACING, PART);
     }
 
     @Override
     public BlockState getStateForPlacement(BlockPlaceContext ctx) {
-        return defaultBlockState().setValue(FACING, ctx.getHorizontalDirection().getOpposite());
+        Direction facing = ctx.getHorizontalDirection().getOpposite();
+        BlockPos origin = ctx.getClickedPos();
+
+        // Check all 4 positions are available
+        BlockPos[] positions = ShopPart.getAllPositions(origin, facing);
+        for (BlockPos p : positions) {
+            if (!ctx.getLevel().getBlockState(p).canBeReplaced(ctx)) return null;
+        }
+
+        return defaultBlockState().setValue(FACING, facing).setValue(PART, ShopPart.ORIGIN);
+    }
+
+    @Override
+    public void setPlacedBy(Level level, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack stack) {
+        if (!level.isClientSide) {
+            Direction facing = state.getValue(FACING);
+            ShopPart[] parts = ShopPart.values();
+            for (int i = 1; i < parts.length; i++) { // skip ORIGIN (index 0)
+                BlockPos partPos = pos.offset(parts[i].getOffsetFromOrigin(facing));
+                level.setBlock(partPos, state.setValue(PART, parts[i]), 3);
+            }
+        }
     }
 
     @Override
     public VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-        return switch (state.getValue(FACING)) {
-            case SOUTH -> SHAPE_SOUTH;
-            case WEST -> SHAPE_WEST;
-            case EAST -> SHAPE_EAST;
-            default -> SHAPE_NORTH;
-        };
+        Direction facing = state.getValue(FACING);
+        ShopPart part = state.getValue(PART);
+        return OUTLINE_SHAPES[facingIndex(facing)][part.ordinal()];
+    }
+
+    @Override
+    public VoxelShape getCollisionShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
+        return FULL_BLOCK;
     }
 
     @Override
     public RenderShape getRenderShape(BlockState state) {
-        return RenderShape.MODEL;
+        // Only ORIGIN renders the model; other parts are invisible
+        return state.getValue(PART) == ShopPart.ORIGIN ? RenderShape.MODEL : RenderShape.INVISIBLE;
     }
 
     @Override
@@ -92,7 +170,20 @@ public class ShopBlock extends BaseEntityBlock {
     @Nullable
     @Override
     public BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
-        return new ShopBlockEntity(pos, state);
+        // Only ORIGIN has a block entity
+        return state.getValue(PART) == ShopPart.ORIGIN ? new ShopBlockEntity(pos, state) : null;
+    }
+
+    /**
+     * Finds the origin ShopBlockEntity from any part position.
+     */
+    @Nullable
+    private ShopBlockEntity getOriginEntity(Level level, BlockPos pos, BlockState state) {
+        if (state.getValue(PART) == ShopPart.ORIGIN) {
+            return level.getBlockEntity(pos) instanceof ShopBlockEntity be ? be : null;
+        }
+        BlockPos originPos = state.getValue(PART).getOriginPos(pos, state.getValue(FACING));
+        return level.getBlockEntity(originPos) instanceof ShopBlockEntity be ? be : null;
     }
 
     @Override
@@ -100,8 +191,8 @@ public class ShopBlock extends BaseEntityBlock {
                                  InteractionHand hand, BlockHitResult hit) {
         if (hand != InteractionHand.MAIN_HAND) return InteractionResult.PASS;
 
-        BlockEntity be = level.getBlockEntity(pos);
-        if (!(be instanceof ShopBlockEntity shopBE)) return InteractionResult.PASS;
+        ShopBlockEntity shopBE = getOriginEntity(level, pos, state);
+        if (shopBE == null) return InteractionResult.PASS;
 
         if (player.isShiftKeyDown()) {
             if (player.hasPermissions(4)) {
@@ -125,8 +216,11 @@ public class ShopBlock extends BaseEntityBlock {
                 return InteractionResult.CONSUME;
             }
 
-            Vec3 hitVec = hit.getLocation();
-            int clickedSlot = shopBE.getClickedSlot(hitVec, state);
+            // Use ray from player eye for accurate slot detection
+            BlockState originState = level.getBlockState(shopBE.getBlockPos());
+            Vec3 eyePos = player.getEyePosition();
+            Vec3 lookDir = player.getLookAngle();
+            int clickedSlot = shopBE.getClickedSlot(eyePos, lookDir, originState);
 
             if (clickedSlot == -2) {
                 ShopOrder order = shopBE.getOrCreateOrder(player.getUUID());
@@ -240,6 +334,28 @@ public class ShopBlock extends BaseEntityBlock {
         if (FabricLoader.getInstance().getEnvironmentType() == EnvType.CLIENT) {
             ShopAdminScreen.open(shopBE);
         }
+    }
+
+    @Override
+    public void playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
+        if (!level.isClientSide && state.getBlock() instanceof ShopBlock) {
+            Direction facing = state.getValue(FACING);
+            ShopPart part = state.getValue(PART);
+            BlockPos originPos = part.getOriginPos(pos, facing);
+
+            // Remove all other parts first
+            for (ShopPart p : ShopPart.values()) {
+                BlockPos partPos = originPos.offset(p.getOffsetFromOrigin(facing));
+                if (!partPos.equals(pos)) {
+                    BlockState partState = level.getBlockState(partPos);
+                    if (partState.getBlock() instanceof ShopBlock) {
+                        // Use flag 18 (SEND_TO_CLIENT | NO_RERENDER) to avoid cascading
+                        level.setBlock(partPos, Blocks.AIR.defaultBlockState(), 18);
+                    }
+                }
+            }
+        }
+        super.playerWillDestroy(level, pos, state, player);
     }
 
     @Override
