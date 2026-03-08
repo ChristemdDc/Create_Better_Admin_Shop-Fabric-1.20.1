@@ -21,9 +21,6 @@
       "com.example.betteradminshop.BetterAdminShopClient"
     ]
   },
-  "mixins": [
-    "betteradminshop.mixins.json"
-  ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",
     "fabric-api": ">=${fabric_api_version}",

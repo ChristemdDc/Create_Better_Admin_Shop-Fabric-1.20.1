@@ -1,7 +1,0 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>com.jozufozu.flywheel</groupId>
-  <artifactId>flywheel-fabric-1.20.1</artifactId>
-  <version>0.6.10-2</version>
-</project>
