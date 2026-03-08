@@ -1,6 +1,8 @@
 package com.example.betteradminshop.client;
 
+import com.example.betteradminshop.block.ShopBlock;
 import com.example.betteradminshop.block.ShopBlockEntity;
+import com.example.betteradminshop.block.ShopPart;
 import com.example.betteradminshop.block.ShopSlot;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
@@ -12,6 +14,7 @@ import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.client.renderer.entity.ItemRenderer;
 import net.minecraft.client.renderer.texture.OverlayTexture;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.item.ItemStack;
@@ -81,9 +84,23 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         Minecraft mc = Minecraft.getInstance();
         if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.BLOCK) return -1;
         BlockHitResult blockHit = (BlockHitResult) mc.hitResult;
-        if (!blockHit.getBlockPos().equals(be.getBlockPos())) return -1;
-        Vec3 hitVec = blockHit.getLocation();
-        return be.getClickedSlot(hitVec, state);
+
+        // Accept hits on any of the 4 part blocks belonging to this shop
+        BlockPos hitBlockPos = blockHit.getBlockPos();
+        if (mc.level == null || mc.player == null) return -1;
+        BlockState hitState = mc.level.getBlockState(hitBlockPos);
+        if (!(hitState.getBlock() instanceof ShopBlock)) return -1;
+
+        Direction facing = hitState.getValue(ShopBlock.FACING);
+        ShopPart part = hitState.getValue(ShopBlock.PART);
+        BlockPos originPos = part.getOriginPos(hitBlockPos, facing);
+        if (!originPos.equals(be.getBlockPos())) return -1;
+
+        // Use ray from player eye for accurate slot detection
+        Vec3 eyePos = mc.player.getEyePosition(mc.getFrameTime());
+        Vec3 lookDir = mc.player.getViewVector(mc.getFrameTime());
+        BlockState originState = mc.level.getBlockState(originPos);
+        return be.getClickedSlot(eyePos, lookDir, originState);
     }
 
     private void renderShopItem(PoseStack poseStack, MultiBufferSource bufferSource,
