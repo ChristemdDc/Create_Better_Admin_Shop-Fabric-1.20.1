@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "betteradminshop:block/shop_block" },
+    "facing=south": { "model": "betteradminshop:block/shop_block", "y": 180 },
+    "facing=west": { "model": "betteradminshop:block/shop_block", "y": 270 },
+    "facing=east": { "model": "betteradminshop:block/shop_block", "y": 90 }
+  }
+}
