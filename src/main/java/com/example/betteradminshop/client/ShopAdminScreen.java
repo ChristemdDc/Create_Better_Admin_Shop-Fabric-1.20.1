@@ -3,6 +3,7 @@ package com.example.betteradminshop.client;
 import com.example.betteradminshop.block.ShopBlockEntity;
 import com.example.betteradminshop.block.ShopSlot;
 import com.example.betteradminshop.network.ModNetworking;
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
@@ -58,8 +59,11 @@ public class ShopAdminScreen extends Screen {
     private int pickerX, pickerY;
 
     // Colors
-    private static final int COL_BG = 0xF0181825;
-    private static final int COL_BG_INNER = 0xF0222235;
+    // NOTA: en 1.21+ Screen.renderBackground aplica un blur al mundo. Si los
+    // colores de panel usan alpha < 0xFF, el blur del mundo se cuela y todo
+    // el contenido del menu se ve "borroso". Por eso 0xFF en los fondos.
+    private static final int COL_BG = 0xFF181825;
+    private static final int COL_BG_INNER = 0xFF222235;
     private static final int COL_ACCENT = 0xFF6C63FF;
     private static final int COL_ACCENT_DIM = 0xFF4A4499;
     private static final int COL_TEXT = 0xFFE0E0E0;
@@ -242,7 +246,10 @@ public class ShopAdminScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        renderBackground(g);
+        // 1.20.5+ render() now calls renderBackground itself; we still call it
+        // explicitly to keep the original ordering (we draw our own panel on
+        // top of the background).
+        renderBackground(g, mouseX, mouseY, partialTick);
 
         drawPanel(g, leftX, topY, GUI_WIDTH, GUI_HEIGHT);
 
@@ -590,17 +597,21 @@ public class ShopAdminScreen extends Screen {
         }
     }
 
+    /**
+     * Signature changed in 1.20.5+ from {@code (mouseX, mouseY, delta)} to
+     * {@code (mouseX, mouseY, scrollX, scrollY)}. We use scrollY (vertical).
+     */
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (currentMode != Mode.NORMAL) {
             int totalRows = (filteredItems.size() + PICKER_COLS - 1) / PICKER_COLS;
             int visibleRows = (PICKER_HEIGHT - 70) / PICKER_SLOT_SIZE;
             int maxScroll = Math.max(0, totalRows - visibleRows);
             pickerScrollOffset = Math.max(0, Math.min(maxScroll,
-                    pickerScrollOffset - (int) Math.signum(delta)));
+                    pickerScrollOffset - (int) Math.signum(scrollY)));
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, delta);
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
     @Override

@@ -1,6 +1,7 @@
 package com.example.betteradminshop.block;
 
 import net.minecraft.world.item.ItemStack;
+
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -53,7 +54,9 @@ public class ShopOrder {
                     ItemStack priceItem = slot.getPriceItem();
                     boolean found = false;
                     for (Map.Entry<ItemStack, Integer> pe : priceMap.entrySet()) {
-                        if (ItemStack.isSameItemSameTags(pe.getKey(), priceItem)) {
+                        // 1.20.5+: isSameItemSameTags was replaced by
+                        // isSameItemSameComponents (data components migration).
+                        if (ItemStack.isSameItemSameComponents(pe.getKey(), priceItem)) {
                             priceMap.put(pe.getKey(), pe.getValue() + slot.getPriceAmount() * qty);
                             found = true;
                             break;

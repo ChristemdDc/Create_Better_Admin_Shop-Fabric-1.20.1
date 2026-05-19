@@ -1,5 +1,6 @@
 package com.example.betteradminshop.block;
 
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.item.ItemStack;
 
@@ -68,13 +69,18 @@ public class ShopSlot {
     public int getCurrentStock() { return currentStock; }
     public void setCurrentStock(int stock) { this.currentStock = stock; }
 
-    public CompoundTag save() {
+    /**
+     * In 1.20.5+ ItemStack serialization changed: it now requires a
+     * {@link HolderLookup.Provider} (so it can resolve component registries).
+     * The previous {@code ItemStack.save(CompoundTag)} signature is gone.
+     */
+    public CompoundTag save(HolderLookup.Provider provider) {
         CompoundTag tag = new CompoundTag();
         if (!displayItem.isEmpty()) {
-            tag.put("DisplayItem", displayItem.save(new CompoundTag()));
+            tag.put("DisplayItem", displayItem.save(provider));
         }
         if (!priceItem.isEmpty()) {
-            tag.put("PriceItem", priceItem.save(new CompoundTag()));
+            tag.put("PriceItem", priceItem.save(provider));
         }
         tag.putInt("PriceAmount", priceAmount);
         tag.putInt("MaxStock", maxStock);
@@ -82,11 +88,21 @@ public class ShopSlot {
         return tag;
     }
 
-    public void load(CompoundTag tag) {
-        displayItem = tag.contains("DisplayItem") ?
-                ItemStack.of(tag.getCompound("DisplayItem")) : ItemStack.EMPTY;
-        priceItem = tag.contains("PriceItem") ?
-                ItemStack.of(tag.getCompound("PriceItem")) : ItemStack.EMPTY;
+    public void load(HolderLookup.Provider provider, CompoundTag tag) {
+        // 1.21.1 firma: ItemStack.parseOptional(HolderLookup.Provider, CompoundTag)
+        // - usamos getCompound() para garantizar el subtipo correcto.
+        if (tag.contains("DisplayItem")) {
+            CompoundTag dt = tag.getCompound("DisplayItem");
+            displayItem = dt.isEmpty() ? ItemStack.EMPTY : ItemStack.parseOptional(provider, dt);
+        } else {
+            displayItem = ItemStack.EMPTY;
+        }
+        if (tag.contains("PriceItem")) {
+            CompoundTag pt = tag.getCompound("PriceItem");
+            priceItem = pt.isEmpty() ? ItemStack.EMPTY : ItemStack.parseOptional(provider, pt);
+        } else {
+            priceItem = ItemStack.EMPTY;
+        }
         priceAmount = tag.getInt("PriceAmount");
         if (priceAmount <= 0) priceAmount = 1;
         maxStock = tag.getInt("MaxStock");

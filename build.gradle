@@ -1,106 +1,110 @@
 plugins {
-	id "fabric-loom" version "1.8.+"
-	id "maven-publish"
+    id 'java-library'
+    id 'maven-publish'
+    id 'net.neoforged.moddev' version '1.0.21'
 }
 
-base.archivesName = archives_base_name
+base {
+    archivesName = archives_base_name
+}
+
+version = "$mod_version+$minecraft_version"
 group = project.maven_group
 
-// Formats the mod version to include the Minecraft version and build number (if present)
-// example: 1.0.0+1.18.2-build.100
-String buildNumber = System.getenv("GITHUB_RUN_NUMBER")
-version = "$mod_version+$minecraft_version" + (buildNumber != null ? "-build.$buildNumber" : "")
-
-repositories {
-	maven { url = "https://maven.createmod.net/" } // Flywheel + Ponder (new Create 6.x)
-
-	maven { url = "https://maven.parchmentmc.org" } // Parchment mappings
-
-	maven { url = "https://mvn.devos.one/releases" } // Porting Lib releases
-	maven { url = "https://mvn.devos.one/snapshots" } // Create and several dependencies
-	maven { url = "https://maven.jamieswhiteshirt.com/libs-release" } // Reach Entity Attributes
-	maven { url = "https://raw.githubusercontent.com/Fuzss/modresources/main/maven" } // Forge Config API Port
-
-	maven { url = "https://jitpack.io/" } // Fabric ASM
-
-	maven { url = "https://maven.shedaniel.me" } // Cloth Config, REI
-	maven { url = "https://maven.blamejared.com" } // JEI
-
-	maven { url = "https://maven.terraformersmc.com/releases" } // Mod Menu, EMI
-
-	maven { url = "https://api.modrinth.com/maven" } // Modrinth maven
-	maven { url = "https://cursemaven.com" } // CurseForge maven
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    withSourcesJar()
 }
 
-configurations.configureEach {
-	resolutionStrategy {
-		// make sure the desired version of loader is used. Sometimes old versions are pulled in transitively.
-		force("net.fabricmc:fabric-loader:$fabric_loader_version")
-	}
+repositories {
+    mavenLocal()
+    maven { url = 'https://maven.createmod.net' }              // Create + Ponder + Flywheel
+    maven { url = 'https://maven.ithundxr.dev/snapshots' }     // Registrate
+    maven { url = 'https://maven.parchmentmc.org' }
+    maven { url = 'https://maven.blamejared.com' }             // JEI
+    maven { url = 'https://maven.shedaniel.me/' }              // REI / Cloth
+    maven { url = 'https://maven.terraformersmc.com/releases/' } // ModMenu / EMI
+    maven { url = 'https://api.modrinth.com/maven' }
+    maven { url = 'https://cursemaven.com' }
+}
+
+neoForge {
+    version = project.neo_version
+
+    // Parchment es opcional. Si la version cae 404, basta con cambiar
+    // use_parchment=false en gradle.properties y vuelve a compilar.
+    if (project.findProperty('use_parchment')?.toString()?.toBoolean()) {
+        parchment {
+            mappingsVersion = project.parchment_version
+            minecraftVersion = project.parchment_minecraft_version
+        }
+    }
+
+    runs {
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            systemProperty 'forge.logging.console.level', 'debug'
+        }
+        client {
+            client()
+        }
+        server {
+            server()
+            programArgument '--nogui'
+        }
+        data {
+            data()
+            programArguments.addAll '--mod', 'betteradminshop',
+                    '--all',
+                    '--output', file('src/generated/resources/').getAbsolutePath(),
+                    '--existing', file('src/main/resources/').getAbsolutePath()
+        }
+    }
+
+    mods {
+        betteradminshop {
+            sourceSet sourceSets.main
+        }
+    }
 }
 
 dependencies {
-	// Setup
-	minecraft("com.mojang:minecraft:$minecraft_version")
-	mappings(loom.layered {
-		it.officialMojangMappings { nameSyntheticMembers = false }
-		it.parchment("org.parchmentmc.data:parchment-$minecraft_version:$parchment_version@zip")
-	})
-	modImplementation("net.fabricmc:fabric-loader:$fabric_loader_version")
-
-	// dependencies
-	modImplementation("net.fabricmc.fabric-api:fabric-api:$fabric_api_version")
-
-	// Create - dependencies are added transitively
-	modImplementation("com.simibubi.create:create-fabric-$minecraft_version:$create_version")
-
-	// Development QOL
-	modLocalRuntime("com.terraformersmc:modmenu:$modmenu_version")
-
-	// Recipe Viewers - Create Fabric supports JEI, REI, and EMI.
-	// See root gradle.properties to choose which to use at runtime.
-	switch (recipe_viewer.toLowerCase(Locale.ROOT)) {
-		case "jei": modLocalRuntime("mezz.jei:jei-$minecraft_version-fabric:$jei_version"); break
-		case "rei": modLocalRuntime("me.shedaniel:RoughlyEnoughItems-fabric:$rei_version"); break
-		case "emi": modLocalRuntime("dev.emi:emi-fabric:$emi_version"); break
-		case "disabled": break
-		default: println("Unknown recipe viewer specified: $recipe_viewer. Must be JEI, REI, EMI, or disabled.")
-	}
-	// if you would like to add integration with them, uncomment them here.
-//    modCompileOnly("mezz.jei:jei-$minecraft_version-fabric:$jei_fabric_version")
-//    modCompileOnly("mezz.jei:jei-$minecraft_version-common:$jei_fabric_version")
-//    modCompileOnly("me.shedaniel:RoughlyEnoughItems-api-fabric:$rei_version")
-//    modCompileOnly("me.shedaniel:RoughlyEnoughItems-default-plugin-fabric:$rei_version")
-//    modCompileOnly("dev.emi:emi:$emi_version")
-}
-
-processResources {
-	// require dependencies to be the version compiled against or newer
-	Map<String, Object> properties = [
-			"version": version,
-			"fabric_loader_version": fabric_loader_version,
-			"fabric_api_version": fabric_api_version,
-			"create_version": create_version,
-			"minecraft_version": minecraft_version
-	]
-
-	inputs.properties(properties)
-
-	filesMatching("fabric.mod.json") {
-		expand properties
-	}
-}
-
-java {
-	withSourcesJar()
+    // Create NeoForge 1.21.1.
+    // El classifier :slim es OBLIGATORIO en NeoForge 1.21.1 — el jar default
+    // lleva jarJar embebidos que rompen el dev runtime. Con :slim hay que
+    // declarar Ponder/Flywheel/Registrate explicitamente (transitive = false).
+    // Ver: https://wiki.createmod.net/developers/depend-on-create/neoforge-1.21.1
+    implementation("com.simibubi.create:create-${minecraft_version}:${create_version}:slim") {
+        transitive = false
+    }
+    implementation "net.createmod.ponder:ponder-neoforge:${ponder_version}"
+    compileOnly    "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"
+    runtimeOnly    "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
+    implementation "com.tterrag.registrate:Registrate:${registrate_version}"
 }
 
 tasks.withType(JavaCompile).configureEach {
-	options.release = 17
+    options.encoding = 'UTF-8'
+    options.release = 21
+}
+
+processResources {
+    Map<String, Object> props = [
+            mod_version            : project.mod_version,
+            mod_version_full       : version,
+            minecraft_version_range: project.minecraft_version_range,
+            neo_version_range      : project.neo_version_range,
+            loader_version_range   : project.loader_version_range,
+            create_version_range   : project.create_version_range
+    ]
+    inputs.properties(props)
+    filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) {
+        expand(props)
+    }
 }
 
 jar {
-	from("LICENSE") {
-		rename { "${it}_${project.archivesBaseName}" }
-	}
+    from('LICENSE') {
+        rename { "${it}_${project.archivesBaseName}" }
+    }
 }

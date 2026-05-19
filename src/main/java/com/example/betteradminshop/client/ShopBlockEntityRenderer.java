@@ -7,7 +7,9 @@ import com.example.betteradminshop.block.ShopSlot;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
+
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
@@ -23,8 +25,6 @@ import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Matrix3f;
-import org.joml.Matrix4f;
 
 public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEntity> {
 
@@ -44,8 +44,7 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         BlockState state = be.getBlockState();
         Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
 
-        // Determine which slot the player is looking at
-        int hoveredSlot = getHoveredSlot(be, state);
+        int hoveredSlot = getHoveredSlot(be, partialTick);
 
         poseStack.pushPose();
         applyFacingRotation(poseStack, facing);
@@ -72,7 +71,6 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
             }
         }
 
-        // Render tendedero selection box
         if (hoveredSlot == -2) {
             renderTendederoSelectionBox(poseStack, bufferSource);
         }
@@ -80,12 +78,11 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         poseStack.popPose();
     }
 
-    private int getHoveredSlot(ShopBlockEntity be, BlockState state) {
+    private int getHoveredSlot(ShopBlockEntity be, float partialTick) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.BLOCK) return -1;
         BlockHitResult blockHit = (BlockHitResult) mc.hitResult;
 
-        // Accept hits on any of the 4 part blocks belonging to this shop
         BlockPos hitBlockPos = blockHit.getBlockPos();
         if (mc.level == null || mc.player == null) return -1;
         BlockState hitState = mc.level.getBlockState(hitBlockPos);
@@ -96,9 +93,10 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         BlockPos originPos = part.getOriginPos(hitBlockPos, facing);
         if (!originPos.equals(be.getBlockPos())) return -1;
 
-        // Use ray from player eye for accurate slot detection
-        Vec3 eyePos = mc.player.getEyePosition(mc.getFrameTime());
-        Vec3 lookDir = mc.player.getViewVector(mc.getFrameTime());
+        // 1.21+: getFrameTime() was replaced by the DeltaTracker. We already
+        // have the partialTick in render() so we just pass it through.
+        Vec3 eyePos = mc.player.getEyePosition(partialTick);
+        Vec3 lookDir = mc.player.getViewVector(partialTick);
         BlockState originState = mc.level.getBlockState(originPos);
         return be.getClickedSlot(eyePos, lookDir, originState);
     }
@@ -131,8 +129,7 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         poseStack.translate(pos[0], pos[1], pos[2]);
 
         VertexConsumer vc = bufferSource.getBuffer(RenderType.lines());
-        Matrix4f matrix = poseStack.last().pose();
-        Matrix3f normal = poseStack.last().normal();
+        PoseStack.Pose pose = poseStack.last();
 
         float h = SELECT_BOX_HALF;
         float x0 = -h, y0 = -h, z0 = -h;
@@ -140,20 +137,20 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         float r = 1f, g = 1f, b = 1f, a = 0.8f;
 
         // Bottom face
-        line(vc, matrix, normal, x0, y0, z0, x1, y0, z0, r, g, b, a);
-        line(vc, matrix, normal, x1, y0, z0, x1, y0, z1, r, g, b, a);
-        line(vc, matrix, normal, x1, y0, z1, x0, y0, z1, r, g, b, a);
-        line(vc, matrix, normal, x0, y0, z1, x0, y0, z0, r, g, b, a);
+        line(vc, pose, x0, y0, z0, x1, y0, z0, r, g, b, a);
+        line(vc, pose, x1, y0, z0, x1, y0, z1, r, g, b, a);
+        line(vc, pose, x1, y0, z1, x0, y0, z1, r, g, b, a);
+        line(vc, pose, x0, y0, z1, x0, y0, z0, r, g, b, a);
         // Top face
-        line(vc, matrix, normal, x0, y1, z0, x1, y1, z0, r, g, b, a);
-        line(vc, matrix, normal, x1, y1, z0, x1, y1, z1, r, g, b, a);
-        line(vc, matrix, normal, x1, y1, z1, x0, y1, z1, r, g, b, a);
-        line(vc, matrix, normal, x0, y1, z1, x0, y1, z0, r, g, b, a);
+        line(vc, pose, x0, y1, z0, x1, y1, z0, r, g, b, a);
+        line(vc, pose, x1, y1, z0, x1, y1, z1, r, g, b, a);
+        line(vc, pose, x1, y1, z1, x0, y1, z1, r, g, b, a);
+        line(vc, pose, x0, y1, z1, x0, y1, z0, r, g, b, a);
         // Vertical edges
-        line(vc, matrix, normal, x0, y0, z0, x0, y1, z0, r, g, b, a);
-        line(vc, matrix, normal, x1, y0, z0, x1, y1, z0, r, g, b, a);
-        line(vc, matrix, normal, x1, y0, z1, x1, y1, z1, r, g, b, a);
-        line(vc, matrix, normal, x0, y0, z1, x0, y1, z1, r, g, b, a);
+        line(vc, pose, x0, y0, z0, x0, y1, z0, r, g, b, a);
+        line(vc, pose, x1, y0, z0, x1, y1, z0, r, g, b, a);
+        line(vc, pose, x1, y0, z1, x1, y1, z1, r, g, b, a);
+        line(vc, pose, x0, y0, z1, x0, y1, z1, r, g, b, a);
 
         poseStack.popPose();
     }
@@ -172,30 +169,35 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         poseStack.translate(cx, cy, cz);
 
         VertexConsumer vc = bufferSource.getBuffer(RenderType.lines());
-        Matrix4f matrix = poseStack.last().pose();
-        Matrix3f normal = poseStack.last().normal();
+        PoseStack.Pose pose = poseStack.last();
 
         float r = 0.2f, g = 1f, b = 0.2f, a = 0.9f;
 
-        line(vc, matrix, normal, -hx, -hy, -hz,  hx, -hy, -hz, r, g, b, a);
-        line(vc, matrix, normal,  hx, -hy, -hz,  hx, -hy,  hz, r, g, b, a);
-        line(vc, matrix, normal,  hx, -hy,  hz, -hx, -hy,  hz, r, g, b, a);
-        line(vc, matrix, normal, -hx, -hy,  hz, -hx, -hy, -hz, r, g, b, a);
+        line(vc, pose, -hx, -hy, -hz,  hx, -hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy, -hz,  hx, -hy,  hz, r, g, b, a);
+        line(vc, pose,  hx, -hy,  hz, -hx, -hy,  hz, r, g, b, a);
+        line(vc, pose, -hx, -hy,  hz, -hx, -hy, -hz, r, g, b, a);
 
-        line(vc, matrix, normal, -hx,  hy, -hz,  hx,  hy, -hz, r, g, b, a);
-        line(vc, matrix, normal,  hx,  hy, -hz,  hx,  hy,  hz, r, g, b, a);
-        line(vc, matrix, normal,  hx,  hy,  hz, -hx,  hy,  hz, r, g, b, a);
-        line(vc, matrix, normal, -hx,  hy,  hz, -hx,  hy, -hz, r, g, b, a);
+        line(vc, pose, -hx,  hy, -hz,  hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx,  hy, -hz,  hx,  hy,  hz, r, g, b, a);
+        line(vc, pose,  hx,  hy,  hz, -hx,  hy,  hz, r, g, b, a);
+        line(vc, pose, -hx,  hy,  hz, -hx,  hy, -hz, r, g, b, a);
 
-        line(vc, matrix, normal, -hx, -hy, -hz, -hx,  hy, -hz, r, g, b, a);
-        line(vc, matrix, normal,  hx, -hy, -hz,  hx,  hy, -hz, r, g, b, a);
-        line(vc, matrix, normal,  hx, -hy,  hz,  hx,  hy,  hz, r, g, b, a);
-        line(vc, matrix, normal, -hx, -hy,  hz, -hx,  hy,  hz, r, g, b, a);
+        line(vc, pose, -hx, -hy, -hz, -hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy, -hz,  hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy,  hz,  hx,  hy,  hz, r, g, b, a);
+        line(vc, pose, -hx, -hy,  hz, -hx,  hy,  hz, r, g, b, a);
 
         poseStack.popPose();
     }
 
-    private static void line(VertexConsumer vc, Matrix4f matrix, Matrix3f normal,
+    /**
+     * NeoForge 1.21.1 ya trae la API "nueva" de VertexConsumer:
+     * {@code addVertex / setColor / setNormal}, sin {@code endVertex()}.
+     * Usamos {@link PoseStack.Pose} en lugar de pasar Matrix4f + Matrix3f
+     * separados — la pose ya carga ambos y los aplica internamente.
+     */
+    private static void line(VertexConsumer vc, PoseStack.Pose pose,
                              float x0, float y0, float z0, float x1, float y1, float z1,
                              float r, float g, float b, float a) {
         float nx = x1 - x0;
@@ -203,17 +205,17 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         float nz = z1 - z0;
         float len = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
         if (len > 0) { nx /= len; ny /= len; nz /= len; }
-        vc.vertex(matrix, x0, y0, z0).color(r, g, b, a).normal(normal, nx, ny, nz).endVertex();
-        vc.vertex(matrix, x1, y1, z1).color(r, g, b, a).normal(normal, nx, ny, nz).endVertex();
+        vc.addVertex(pose, x0, y0, z0).setColor(r, g, b, a).setNormal(pose, nx, ny, nz);
+        vc.addVertex(pose, x1, y1, z1).setColor(r, g, b, a).setNormal(pose, nx, ny, nz);
     }
 
     private void renderOutOfStockOverlay(PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
-        var font = Minecraft.getInstance().font;
+        Font font = Minecraft.getInstance().font;
         poseStack.pushPose();
         poseStack.scale(0.05f, -0.05f, 0.05f);
         poseStack.translate(-3, -6, 0);
-        font.drawInBatch("\u2717", 0, 0, 0xFF0000, false, poseStack.last().pose(),
-                bufferSource, net.minecraft.client.gui.Font.DisplayMode.NORMAL, 0, packedLight);
+        font.drawInBatch("✗", 0, 0, 0xFF0000, false, poseStack.last().pose(),
+                bufferSource, Font.DisplayMode.NORMAL, 0, packedLight);
         poseStack.popPose();
     }
 

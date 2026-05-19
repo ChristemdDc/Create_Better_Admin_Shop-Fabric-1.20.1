@@ -2,16 +2,25 @@ package com.example.betteradminshop;
 
 import com.example.betteradminshop.client.ShopBlockEntityRenderer;
 import com.example.betteradminshop.registry.ModBlockEntities;
-import net.fabricmc.api.ClientModInitializer;
-import net.minecraft.client.renderer.blockentity.BlockEntityRenderers;
 
-public class BetterAdminShopClient implements ClientModInitializer {
+import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 
-    @Override
-    public void onInitializeClient() {
-        // Register block entity renderer
-        BlockEntityRenderers.register(ModBlockEntities.SHOP_BLOCK_ENTITY, ShopBlockEntityRenderer::new);
+/**
+ * Client-only setup. Equivalent of the Fabric {@code ClientModInitializer}.
+ * NeoForge calls this automatically because of the {@link EventBusSubscriber}
+ * annotation: client-only, mod event bus.
+ */
+@EventBusSubscriber(modid = BetterAdminShop.ID, value = Dist.CLIENT, bus = EventBusSubscriber.Bus.MOD)
+public final class BetterAdminShopClient {
+    private BetterAdminShopClient() {}
 
+    @SubscribeEvent
+    public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
+        event.registerBlockEntityRenderer(ModBlockEntities.SHOP_BLOCK_ENTITY.get(),
+                ShopBlockEntityRenderer::new);
         BetterAdminShop.LOGGER.info("{} client initialized.", BetterAdminShop.NAME);
     }
 }

@@ -1,0 +1,35 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "CC0"
+issueTrackerURL = "https://github.com/Fabricators-of-Create/create-fabric-addon-template"
+
+[[mods]]
+modId = "betteradminshop"
+version = "${mod_version_full}"
+displayName = "Create: Better Admin Shop"
+authors = "Me!"
+description = '''
+Adds a functional shop block to Create Mod with item display, purchase orders, stock management, and Depot integration.
+'''
+logoFile = "icon.png"
+
+[[dependencies.betteradminshop]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.betteradminshop]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.betteradminshop]]
+modId = "create"
+type = "required"
+versionRange = "${create_version_range}"
+ordering = "AFTER"
+side = "BOTH"

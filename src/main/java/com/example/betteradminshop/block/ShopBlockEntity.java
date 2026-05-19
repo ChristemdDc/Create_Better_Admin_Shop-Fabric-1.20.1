@@ -1,13 +1,13 @@
 package com.example.betteradminshop.block;
 
-import com.example.betteradminshop.BetterAdminShop;
 import com.example.betteradminshop.registry.ModBlockEntities;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
-import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
@@ -21,7 +21,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 public class ShopBlockEntity extends BlockEntity {
 
@@ -33,7 +37,6 @@ public class ShopBlockEntity extends BlockEntity {
     private final Map<UUID, ShopOrder> playerOrders = new HashMap<>();
 
     // Render positions for group 1 (elements 37-48)
-    // X/Z = center of each shelf element; Y = shelf top + 0.175 (half item visual height at scale 0.35)
     public static final float[][] GROUP1_POSITIONS = {
             {3f/16, 13.8f/16, 3.7f/16},
             {6f/16, 13.8f/16, 3.7f/16},
@@ -73,7 +76,7 @@ public class ShopBlockEntity extends BlockEntity {
     public static final float[] TENDEDERO_MAX = {32f/16, 27f/16, 6f/16};
 
     public ShopBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.SHOP_BLOCK_ENTITY, pos, state);
+        super(ModBlockEntities.SHOP_BLOCK_ENTITY.get(), pos, state);
         for (int i = 0; i < TOTAL_SLOTS; i++) {
             slots[i] = new ShopSlot();
         }
@@ -199,7 +202,7 @@ public class ShopBlockEntity extends BlockEntity {
             if (existing.isEmpty()) {
                 container.setItem(i, remaining.copy());
                 remaining = ItemStack.EMPTY;
-            } else if (ItemStack.isSameItemSameTags(existing, remaining)) {
+            } else if (ItemStack.isSameItemSameComponents(existing, remaining)) {
                 int canFit = existing.getMaxStackSize() - existing.getCount();
                 if (canFit > 0) {
                     int toAdd = Math.min(canFit, remaining.getCount());
@@ -242,7 +245,7 @@ public class ShopBlockEntity extends BlockEntity {
         int count = 0;
         for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (ItemStack.isSameItemSameTags(stack, target)) {
+            if (ItemStack.isSameItemSameComponents(stack, target)) {
                 count += stack.getCount();
             }
         }
@@ -253,7 +256,7 @@ public class ShopBlockEntity extends BlockEntity {
         int remaining = amount;
         for (int i = 0; i < player.getInventory().getContainerSize() && remaining > 0; i++) {
             ItemStack stack = player.getInventory().getItem(i);
-            if (ItemStack.isSameItemSameTags(stack, target)) {
+            if (ItemStack.isSameItemSameComponents(stack, target)) {
                 int toRemove = Math.min(remaining, stack.getCount());
                 stack.shrink(toRemove);
                 if (stack.isEmpty()) {
@@ -286,7 +289,6 @@ public class ShopBlockEntity extends BlockEntity {
         float tcx = (TENDEDERO_MIN[0] + TENDEDERO_MAX[0]) / 2f;
         float tcy = (TENDEDERO_MIN[1] + TENDEDERO_MAX[1]) / 2f;
         float tcz = (TENDEDERO_MIN[2] + TENDEDERO_MAX[2]) / 2f;
-        // Find t where ray reaches tendedero Z center
         if (Math.abs(mdz) > 1e-6) {
             double t = (tcz - mez) / mdz;
             if (t > 0) {
@@ -299,15 +301,12 @@ public class ShopBlockEntity extends BlockEntity {
             }
         }
 
-        // For each slot, find the closest point on the ray to the slot center
-        // using full 3D distance: ray P(t) = eye + t*dir
-        // t_closest = dot(slotPos - eye, dir) / dot(dir, dir)
         double dirDot = mdx * mdx + mdy * mdy + mdz * mdz;
         if (dirDot < 1e-10) return -1;
 
         int bestSlot = -1;
         double bestDist = Double.MAX_VALUE;
-        double maxDist = 3.5 / 16.0; // max perpendicular distance to slot center
+        double maxDist = 3.5 / 16.0;
 
         for (int i = 0; i < SLOTS_PER_GROUP; i++) {
             double dist = rayToSlotDist(mex, ey, mez, mdx, mdy, mdz, dirDot, GROUP1_POSITIONS[i]);
@@ -332,7 +331,7 @@ public class ShopBlockEntity extends BlockEntity {
         double sx = slotPos[0], sy = slotPos[1], sz = slotPos[2];
         double diffX = sx - ex, diffY = sy - ey, diffZ = sz - ez;
         double t = (diffX * dx + diffY * dy + diffZ * dz) / dirDot;
-        if (t < 0) return Double.MAX_VALUE; // behind the player
+        if (t < 0) return Double.MAX_VALUE;
         double px = ex + dx * t - sx;
         double py = ey + dy * t - sy;
         double pz = ez + dz * t - sz;
@@ -383,12 +382,14 @@ public class ShopBlockEntity extends BlockEntity {
         }
     }
 
+    // ===== NBT (1.20.5+ data components migration) =========================
+
     @Override
-    protected void saveAdditional(CompoundTag tag) {
-        super.saveAdditional(tag);
+    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
         ListTag slotList = new ListTag();
         for (ShopSlot slot : slots) {
-            slotList.add(slot.save());
+            slotList.add(slot.save(registries));
         }
         tag.put("Slots", slotList);
 
@@ -400,13 +401,13 @@ public class ShopBlockEntity extends BlockEntity {
     }
 
     @Override
-    public void load(CompoundTag tag) {
-        super.load(tag);
+    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
 
         if (tag.contains("Slots")) {
             ListTag slotList = tag.getList("Slots", Tag.TAG_COMPOUND);
             for (int i = 0; i < Math.min(slotList.size(), TOTAL_SLOTS); i++) {
-                slots[i].load(slotList.getCompound(i));
+                slots[i].load(registries, slotList.getCompound(i));
             }
         }
 
@@ -418,9 +419,9 @@ public class ShopBlockEntity extends BlockEntity {
     }
 
     @Override
-    public CompoundTag getUpdateTag() {
+    public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
         CompoundTag tag = new CompoundTag();
-        saveAdditional(tag);
+        saveAdditional(tag, registries);
         return tag;
     }
 
