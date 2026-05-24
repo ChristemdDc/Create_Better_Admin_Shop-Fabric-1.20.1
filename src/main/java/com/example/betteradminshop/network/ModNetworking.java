@@ -2,10 +2,10 @@ package com.example.betteradminshop.network;
 
 import com.example.betteradminshop.BetterAdminShop;
 import com.example.betteradminshop.block.ShopBlockEntity;
+import com.example.betteradminshop.command.AdminShopCommand;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.RegistryFriendlyByteBuf;
-import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -85,16 +85,6 @@ public final class ModNetworking {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
-    public record LinkDepot(BlockPos shopPos, BlockPos depotPos) implements CustomPacketPayload {
-        public static final Type<LinkDepot> TYPE = new Type<>(BetterAdminShop.id("link_depot"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, LinkDepot> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, LinkDepot::shopPos,
-                BlockPos.STREAM_CODEC, LinkDepot::depotPos,
-                LinkDepot::new
-        );
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
-    }
-
     // -------- Registration --------------------------------------------------
 
     public static void register(RegisterPayloadHandlersEvent event) {
@@ -107,7 +97,10 @@ public final class ModNetworking {
         r.playToServer(SetSlotStock.TYPE, SetSlotStock.STREAM_CODEC, ModNetworking::handleSetSlotStock);
         r.playToServer(RestockSlot.TYPE,  RestockSlot.STREAM_CODEC,  ModNetworking::handleRestockSlot);
         r.playToServer(ClearSlot.TYPE,    ClearSlot.STREAM_CODEC,    ModNetworking::handleClearSlot);
-        r.playToServer(LinkDepot.TYPE,    LinkDepot.STREAM_CODEC,    ModNetworking::handleLinkDepot);
+
+        // Records panel
+        r.playToServer(RequestRecordsPayload.TYPE, RequestRecordsPayload.STREAM_CODEC, ModNetworking::handleRequestRecords);
+        r.playToClient(RecordsDataPayload.TYPE,    RecordsDataPayload.STREAM_CODEC,    ModNetworking::handleRecordsData);
     }
 
     // -------- Server-side handlers (run on main thread) --------------------
@@ -147,16 +140,27 @@ public final class ModNetworking {
         if (shop != null) shop.clearSlot(msg.slotIndex());
     }
 
-    private static void handleLinkDepot(LinkDepot msg, IPayloadContext ctx) {
+    // ---- Records panel (server side) --------------------------------------
+
+    private static void handleRequestRecords(RequestRecordsPayload msg, IPayloadContext ctx) {
         ServerPlayer player = asServer(ctx);
         if (player == null || !player.hasPermissions(4)) return;
-        ShopBlockEntity shop = getShop(player, msg.shopPos());
-        if (shop != null) {
-            shop.setDepotPos(msg.depotPos());
-            player.displayClientMessage(
-                    Component.literal("§aDepot vinculado en " +
-                            msg.depotPos().getX() + ", " + msg.depotPos().getY() + ", " + msg.depotPos().getZ()), true);
-        }
+        ctx.enqueueWork(() -> AdminShopCommand.openRecords(
+                player, msg.page(), msg.playerFilter(), msg.sortColumn(), msg.ascending()));
+    }
+
+    /** Runs client-side — opens or refreshes the AdminRecordsScreen. */
+    @SuppressWarnings("deprecation")
+    private static void handleRecordsData(RecordsDataPayload msg, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+            if (mc == null) return;
+            if (mc.screen instanceof com.example.betteradminshop.client.AdminRecordsScreen existing) {
+                existing.updateData(msg);
+            } else {
+                mc.setScreen(new com.example.betteradminshop.client.AdminRecordsScreen(msg));
+            }
+        });
     }
 
     // -------- Helpers -------------------------------------------------------
@@ -193,9 +197,5 @@ public final class ModNetworking {
 
     public static void sendClearSlot(BlockPos pos, int slotIndex) {
         PacketDistributor.sendToServer(new ClearSlot(pos, slotIndex));
-    }
-
-    public static void sendLinkDepot(BlockPos shopPos, BlockPos depotPos) {
-        PacketDistributor.sendToServer(new LinkDepot(shopPos, depotPos));
     }
 }

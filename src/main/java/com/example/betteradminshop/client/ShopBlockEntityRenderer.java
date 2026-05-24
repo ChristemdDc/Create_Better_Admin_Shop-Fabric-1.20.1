@@ -7,6 +7,7 @@ import com.example.betteradminshop.block.ShopSlot;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
+import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -26,11 +27,17 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Objects;
+
 public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEntity> {
 
     private final ItemRenderer itemRenderer;
     private static final float ITEM_SCALE = 0.22f;
     private static final float SELECT_BOX_HALF = 1.4f / 16f;
+    /** Extra upward offset so items sit on top of the tray surface instead of inside it. */
+    private static final float ITEM_Y_OFFSET = 1.5f / 16f;
+    // Cached empty package stack — avoids allocating a new ItemStack every frame
+    private static final ItemStack PACKAGE_DISPLAY_STACK = PackageItem.containing(java.util.List.of());
 
     public ShopBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
         this.itemRenderer = Minecraft.getInstance().getItemRenderer();
@@ -71,8 +78,17 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
             }
         }
 
+        // Render confirmarcompra selection box when looking at the confirm panel
         if (hoveredSlot == -2) {
-            renderTendederoSelectionBox(poseStack, bufferSource);
+            renderConfirmarSelectionBox(poseStack, bufferSource);
+        }
+
+        // Render entrega zone: cardboard box (if delivery pending) + selection highlight
+        if (be.hasDelivery()) {
+            renderEntregaPackage(poseStack, bufferSource, packedLight, packedOverlay);
+        }
+        if (hoveredSlot == -3) {
+            renderEntregaSelectionBox(poseStack, bufferSource);
         }
 
         poseStack.popPose();
@@ -98,6 +114,8 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         Vec3 eyePos = mc.player.getEyePosition(partialTick);
         Vec3 lookDir = mc.player.getViewVector(partialTick);
         BlockState originState = mc.level.getBlockState(originPos);
+        // Guard: the shop may have been broken between the hitResult check and now
+        if (!(originState.getBlock() instanceof ShopBlock)) return -1;
         return be.getClickedSlot(eyePos, lookDir, originState);
     }
 
@@ -107,7 +125,7 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         if (displayItem.isEmpty()) return;
 
         poseStack.pushPose();
-        poseStack.translate(pos[0], pos[1], pos[2]);
+        poseStack.translate(pos[0], pos[1] + ITEM_Y_OFFSET, pos[2]);
         poseStack.scale(ITEM_SCALE, ITEM_SCALE, ITEM_SCALE);
         poseStack.mulPose(Axis.YP.rotationDegrees(180));
 
@@ -155,15 +173,16 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         poseStack.popPose();
     }
 
-    private void renderTendederoSelectionBox(PoseStack poseStack, MultiBufferSource bufferSource) {
-        float[] tMin = ShopBlockEntity.TENDEDERO_MIN;
-        float[] tMax = ShopBlockEntity.TENDEDERO_MAX;
-        float cx = (tMin[0] + tMax[0]) / 2f;
-        float cy = (tMin[1] + tMax[1]) / 2f;
-        float cz = (tMin[2] + tMax[2]) / 2f;
-        float hx = (tMax[0] - tMin[0]) / 2f;
-        float hy = (tMax[1] - tMin[1]) / 2f;
-        float hz = (tMax[2] - tMin[2]) / 2f;
+    /** Renders an outline box matching the confirmarcompra group bounds. */
+    private void renderConfirmarSelectionBox(PoseStack poseStack, MultiBufferSource bufferSource) {
+        float[] cMin = ShopBlockEntity.CONFIRMAR_MIN;
+        float[] cMax = ShopBlockEntity.CONFIRMAR_MAX;
+        float cx = (cMin[0] + cMax[0]) / 2f;
+        float cy = (cMin[1] + cMax[1]) / 2f;
+        float cz = (cMin[2] + cMax[2]) / 2f;
+        float hx = (cMax[0] - cMin[0]) / 2f;
+        float hy = (cMax[1] - cMin[1]) / 2f;
+        float hz = (cMax[2] - cMin[2]) / 2f;
 
         poseStack.pushPose();
         poseStack.translate(cx, cy, cz);
@@ -187,6 +206,73 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         line(vc, pose,  hx, -hy, -hz,  hx,  hy, -hz, r, g, b, a);
         line(vc, pose,  hx, -hy,  hz,  hx,  hy,  hz, r, g, b, a);
         line(vc, pose, -hx, -hy,  hz, -hx,  hy,  hz, r, g, b, a);
+
+        poseStack.popPose();
+    }
+
+    /** Renders an outline box matching the entrega delivery zone — visually expanded for clarity. */
+    private void renderEntregaSelectionBox(PoseStack poseStack, MultiBufferSource bufferSource) {
+        // Visual bounds combine:
+        //   elem 54 – outer rim: X[22.9,31] Y[11,12]   Z[7.4,15.2]
+        //   elem 55 – tray:      X[24,30]   Y[12,12.5] Z[8.4,14.2]
+        // + headroom for the floating package above the tray
+        float minX = 22.9f / 16f, maxX = 31f / 16f;
+        float minY = 11f   / 16f, maxY = 1.12f;        // 0.6875 → ~1.12 covers the package
+        float minZ = 7.4f  / 16f, maxZ = 15.2f / 16f;
+
+        float cx = (minX + maxX) / 2f;
+        float cy = (minY + maxY) / 2f;
+        float cz = (minZ + maxZ) / 2f;
+        float hx = (maxX - minX) / 2f;
+        float hy = (maxY - minY) / 2f;
+        float hz = (maxZ - minZ) / 2f;
+
+        poseStack.pushPose();
+        poseStack.translate(cx, cy, cz);
+
+        VertexConsumer vc = bufferSource.getBuffer(RenderType.lines());
+        PoseStack.Pose pose = poseStack.last();
+
+        float r = 1f, g = 0.8f, b = 0.1f, a = 0.9f;
+
+        line(vc, pose, -hx, -hy, -hz,  hx, -hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy, -hz,  hx, -hy,  hz, r, g, b, a);
+        line(vc, pose,  hx, -hy,  hz, -hx, -hy,  hz, r, g, b, a);
+        line(vc, pose, -hx, -hy,  hz, -hx, -hy, -hz, r, g, b, a);
+
+        line(vc, pose, -hx,  hy, -hz,  hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx,  hy, -hz,  hx,  hy,  hz, r, g, b, a);
+        line(vc, pose,  hx,  hy,  hz, -hx,  hy,  hz, r, g, b, a);
+        line(vc, pose, -hx,  hy,  hz, -hx,  hy, -hz, r, g, b, a);
+
+        line(vc, pose, -hx, -hy, -hz, -hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy, -hz,  hx,  hy, -hz, r, g, b, a);
+        line(vc, pose,  hx, -hy,  hz,  hx,  hy,  hz, r, g, b, a);
+        line(vc, pose, -hx, -hy,  hz, -hx,  hy,  hz, r, g, b, a);
+
+        poseStack.popPose();
+    }
+
+    /** Renders a package item floating and rotating above the entrega platform. */
+    private void renderEntregaPackage(PoseStack poseStack, MultiBufferSource bufferSource,
+                                      int packedLight, int packedOverlay) {
+        float[] eMin = ShopBlockEntity.ENTREGA_MIN;
+        float[] eMax = ShopBlockEntity.ENTREGA_MAX;
+        float cx = (eMin[0] + eMax[0]) / 2f;
+        float cy = eMax[1] + 0.18f; // float above the platform
+        float cz = (eMin[2] + eMax[2]) / 2f;
+
+        // Smooth Y-rotation: 360° every 4 seconds (80 ticks)
+        long gameTime = Objects.requireNonNull(Minecraft.getInstance().level).getGameTime();
+        float angle = ((gameTime % 80) + (float) Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(false)) * (360f / 80f);
+
+        poseStack.pushPose();
+        poseStack.translate(cx, cy, cz);
+        poseStack.scale(0.52f, 0.52f, 0.52f);
+        poseStack.mulPose(Axis.YP.rotationDegrees(angle));
+
+        itemRenderer.renderStatic(PACKAGE_DISPLAY_STACK, ItemDisplayContext.FIXED,
+                packedLight, OverlayTexture.NO_OVERLAY, poseStack, bufferSource, null, 0);
 
         poseStack.popPose();
     }

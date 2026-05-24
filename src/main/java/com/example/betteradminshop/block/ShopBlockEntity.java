@@ -1,6 +1,7 @@
 package com.example.betteradminshop.block;
 
 import com.example.betteradminshop.registry.ModBlockEntities;
+import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -11,9 +12,11 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import com.example.betteradminshop.data.PurchaseDatabase;
+
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.Container;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -21,7 +24,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +38,7 @@ public class ShopBlockEntity extends BlockEntity {
     public static final int TOTAL_SLOTS = SLOTS_PER_GROUP * 2;
 
     private final ShopSlot[] slots = new ShopSlot[TOTAL_SLOTS];
-    private BlockPos depotPos = null;
+    private final Deque<DeliveryEntry> deliveryQueue = new ArrayDeque<>();
     private final Map<UUID, ShopOrder> playerOrders = new HashMap<>();
 
     // Render positions for group 1 (elements 37-48)
@@ -71,9 +76,15 @@ public class ShopBlockEntity extends BlockEntity {
     // Size of each render slot (in block units) for hit detection
     public static final float SLOT_HIT_SIZE = 2.5f / 16f;
 
-    // Tendedero bounding box (elements 70-84), approximate
-    public static final float[] TENDEDERO_MIN = {24f/16, 13f/16, 0f/16};
-    public static final float[] TENDEDERO_MAX = {32f/16, 27f/16, 6f/16};
+    // Confirmar-compra panel bounds (model group "confirmarcompra")
+    // Model coords: x=[24,30], y=[13,20.7], z=[0.9,7.4] (pixels/16)
+    public static final float[] CONFIRMAR_MIN = {24f/16, 13f/16, 0.9f/16};
+    public static final float[] CONFIRMAR_MAX = {30f/16, 20.7f/16, 7.4f/16};
+
+    // Entrega (delivery pickup) zone bounds (model group "entrega")
+    // Model coords: x=[24,30], y=[12,12.5], z=[8.4,14.2] (pixels/16)
+    public static final float[] ENTREGA_MIN = {24f/16, 12f/16, 8.4f/16};
+    public static final float[] ENTREGA_MAX = {30f/16, 12.5f/16, 14.2f/16};
 
     public ShopBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.SHOP_BLOCK_ENTITY.get(), pos, state);
@@ -91,18 +102,12 @@ public class ShopBlockEntity extends BlockEntity {
         return slots[index];
     }
 
-    public BlockPos getDepotPos() {
-        return depotPos;
+    public boolean hasDelivery() {
+        return !deliveryQueue.isEmpty();
     }
 
-    public void setDepotPos(BlockPos pos) {
-        this.depotPos = pos;
-        setChanged();
-        syncToClient();
-    }
-
-    public boolean hasDepot() {
-        return depotPos != null;
+    public DeliveryEntry peekDelivery() {
+        return deliveryQueue.peek();
     }
 
     public ShopOrder getOrCreateOrder(UUID playerId) {
@@ -153,20 +158,40 @@ public class ShopBlockEntity extends BlockEntity {
             int qty = entry.getValue();
             ShopSlot slot = slots[slotIdx];
             if (!slot.isEmpty()) {
-                ItemStack item = slot.getDisplayItem().copy();
-                int remaining = qty;
-                while (remaining > 0) {
-                    int batch = Math.min(remaining, item.getMaxStackSize());
-                    ItemStack stack = item.copy();
-                    stack.setCount(batch);
-                    purchasedItems.add(stack);
-                    remaining -= batch;
-                }
+                // Keep exact count — no splitting by maxStackSize
+                ItemStack stack = slot.getDisplayItem().copy();
+                stack.setCount(qty);
+                purchasedItems.add(stack);
                 slot.reduceStock(qty);
             }
         }
 
-        depositToDepot(purchasedItems);
+        DeliveryEntry newEntry = new DeliveryEntry(purchasedItems, player.getUUID(),
+                System.currentTimeMillis(), player.getName().getString());
+        // Start protection immediately if this will be the first (and only) entry
+        if (deliveryQueue.isEmpty()) {
+            newEntry.startProtection();
+        }
+        deliveryQueue.addLast(newEntry);
+
+        // ── Log to SQLite database ──────────────────────────────────────────
+        String priceSummary = buildPriceSummary(totalPrice);
+        String transactionId = java.util.UUID.randomUUID().toString();
+        long now = System.currentTimeMillis();
+        String worldKey = (level != null) ? level.dimension().location().toString() : "unknown";
+        for (ItemStack stack : purchasedItems) {
+            PurchaseDatabase.getInstance().logPurchase(
+                    transactionId,
+                    player.getUUID().toString(),
+                    player.getName().getString(),
+                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
+                    stack.getHoverName().getString(),
+                    stack.getCount(),
+                    priceSummary,
+                    now,
+                    worldPosition,
+                    worldKey);
+        }
 
         clearOrder(playerId);
         setChanged();
@@ -175,62 +200,57 @@ public class ShopBlockEntity extends BlockEntity {
         return null;
     }
 
-    private void depositToDepot(List<ItemStack> items) {
-        if (level == null || depotPos == null) {
-            dropItemsAtBlock(items);
-            return;
+    private static String buildPriceSummary(Map<ItemStack, Integer> totalPrice) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<ItemStack, Integer> entry : totalPrice.entrySet()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(entry.getValue()).append("× ").append(entry.getKey().getHoverName().getString());
         }
-
-        BlockEntity depotBE = level.getBlockEntity(depotPos);
-        if (depotBE instanceof Container container) {
-            for (ItemStack stack : items) {
-                ItemStack remaining = insertIntoContainer(container, stack);
-                if (!remaining.isEmpty()) {
-                    dropItemAt(remaining, Vec3.atCenterOf(depotPos));
-                }
-            }
-        } else {
-            dropItemsAtDepot(items);
-        }
+        return sb.toString();
     }
 
-    private ItemStack insertIntoContainer(Container container, ItemStack stack) {
-        ItemStack remaining = stack.copy();
-        for (int i = 0; i < container.getContainerSize(); i++) {
-            if (remaining.isEmpty()) break;
-            ItemStack existing = container.getItem(i);
-            if (existing.isEmpty()) {
-                container.setItem(i, remaining.copy());
-                remaining = ItemStack.EMPTY;
-            } else if (ItemStack.isSameItemSameComponents(existing, remaining)) {
-                int canFit = existing.getMaxStackSize() - existing.getCount();
-                if (canFit > 0) {
-                    int toAdd = Math.min(canFit, remaining.getCount());
-                    existing.grow(toAdd);
-                    remaining.shrink(toAdd);
-                }
-            }
+    /**
+     * Called when a player interacts with the entrega zone.
+     * Enforces the 5-minute buyer-only protection window.
+     *
+     * @return null on success, or an error message key to show the player
+     */
+    public String tryPickupDelivery(ServerPlayer player) {
+        if (deliveryQueue.isEmpty()) {
+            return "no_deliveries";
         }
-        return remaining;
+
+        DeliveryEntry delivery = deliveryQueue.peek();
+
+        if (delivery.isProtectedFrom(player.getUUID())) {
+            long secs = delivery.remainingProtectionSeconds();
+            long mins = secs / 60;
+            long remSecs = secs % 60;
+            return "protected:" + mins + "m " + remSecs + "s";
+        }
+
+        deliveryQueue.poll();
+
+        // Start the protection window for the next queued delivery
+        DeliveryEntry nextHead = deliveryQueue.peek();
+        if (nextHead != null) {
+            nextHead.startProtection();
+        }
+
+        // Pack purchased items into a Create cardboard box
+        List<ItemStack> items = delivery.getItems();
+        ItemStack box = createCardboardBox(items);
+        if (!player.getInventory().add(box)) {
+            dropItemAt(box, Vec3.atCenterOf(worldPosition));
+        }
+
+        setChanged();
+        syncToClient();
+        return null;
     }
 
-    private void dropItemsAtBlock(List<ItemStack> items) {
-        if (level == null) return;
-        Vec3 pos = Vec3.atCenterOf(worldPosition);
-        for (ItemStack item : items) {
-            dropItemAt(item, pos);
-        }
-    }
-
-    private void dropItemsAtDepot(List<ItemStack> items) {
-        if (level == null || depotPos == null) {
-            dropItemsAtBlock(items);
-            return;
-        }
-        Vec3 pos = Vec3.atCenterOf(depotPos).add(0, 0.5, 0);
-        for (ItemStack item : items) {
-            dropItemAt(item, pos);
-        }
+    private ItemStack createCardboardBox(List<ItemStack> items) {
+        return PackageItem.containing(items);
     }
 
     private void dropItemAt(ItemStack stack, Vec3 pos) {
@@ -268,6 +288,8 @@ public class ShopBlockEntity extends BlockEntity {
     }
 
     public int getClickedSlot(Vec3 eyePos, Vec3 lookDir, BlockState state) {
+        // Guard against a stale render call after the block was broken
+        if (!(state.getBlock() instanceof ShopBlock)) return -1;
         // Transform eye position to model space (relative to origin, NORTH-facing)
         double ex = eyePos.x - worldPosition.getX();
         double ey = eyePos.y - worldPosition.getY();
@@ -285,18 +307,30 @@ public class ShopBlockEntity extends BlockEntity {
         }
         double mdy = lookDir.y;
 
-        // Check tendedero: cast ray to the tendedero center plane
-        float tcx = (TENDEDERO_MIN[0] + TENDEDERO_MAX[0]) / 2f;
-        float tcy = (TENDEDERO_MIN[1] + TENDEDERO_MAX[1]) / 2f;
-        float tcz = (TENDEDERO_MIN[2] + TENDEDERO_MAX[2]) / 2f;
+        // Check confirmarcompra panel (returns -2): cast ray to center Z plane
+        float ccz = (CONFIRMAR_MIN[2] + CONFIRMAR_MAX[2]) / 2f;
         if (Math.abs(mdz) > 1e-6) {
-            double t = (tcz - mez) / mdz;
+            double t = (ccz - mez) / mdz;
             if (t > 0) {
                 double ix = mex + mdx * t;
                 double iy = ey + mdy * t;
-                if (ix >= TENDEDERO_MIN[0] && ix <= TENDEDERO_MAX[0] &&
-                        iy >= TENDEDERO_MIN[1] && iy <= TENDEDERO_MAX[1]) {
+                if (ix >= CONFIRMAR_MIN[0] && ix <= CONFIRMAR_MAX[0] &&
+                        iy >= CONFIRMAR_MIN[1] && iy <= CONFIRMAR_MAX[1]) {
                     return -2;
+                }
+            }
+        }
+
+        // Check entrega zone (returns -3): cast ray to center Y plane (horizontal surface)
+        float ecy = (ENTREGA_MIN[1] + ENTREGA_MAX[1]) / 2f;
+        if (Math.abs(mdy) > 1e-6) {
+            double t = (ecy - ey) / mdy;
+            if (t > 0) {
+                double ix = mex + mdx * t;
+                double iz = mez + mdz * t;
+                if (ix >= ENTREGA_MIN[0] && ix <= ENTREGA_MAX[0] &&
+                        iz >= ENTREGA_MIN[2] && iz <= ENTREGA_MAX[2]) {
+                    return -3;
                 }
             }
         }
@@ -393,11 +427,11 @@ public class ShopBlockEntity extends BlockEntity {
         }
         tag.put("Slots", slotList);
 
-        if (depotPos != null) {
-            tag.putInt("DepotX", depotPos.getX());
-            tag.putInt("DepotY", depotPos.getY());
-            tag.putInt("DepotZ", depotPos.getZ());
+        ListTag queueTag = new ListTag();
+        for (DeliveryEntry entry : deliveryQueue) {
+            queueTag.add(entry.save(registries));
         }
+        tag.put("DeliveryQueue", queueTag);
     }
 
     @Override
@@ -411,10 +445,12 @@ public class ShopBlockEntity extends BlockEntity {
             }
         }
 
-        if (tag.contains("DepotX")) {
-            depotPos = new BlockPos(tag.getInt("DepotX"), tag.getInt("DepotY"), tag.getInt("DepotZ"));
-        } else {
-            depotPos = null;
+        deliveryQueue.clear();
+        if (tag.contains("DeliveryQueue")) {
+            ListTag queueTag = tag.getList("DeliveryQueue", Tag.TAG_COMPOUND);
+            for (int i = 0; i < queueTag.size(); i++) {
+                deliveryQueue.addLast(DeliveryEntry.load(queueTag.getCompound(i), registries));
+            }
         }
     }
 

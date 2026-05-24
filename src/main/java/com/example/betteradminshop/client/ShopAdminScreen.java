@@ -5,9 +5,8 @@ import com.example.betteradminshop.block.ShopSlot;
 import com.example.betteradminshop.network.ModNetworking;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.Button;
-import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -18,6 +17,7 @@ import net.minecraft.world.item.Items;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 public class ShopAdminScreen extends Screen {
 
@@ -35,14 +35,11 @@ public class ShopAdminScreen extends Screen {
     private Mode currentMode = Mode.NORMAL;
     private int selectedSlot = -1;
 
-    // Depot fields
-    private EditBox depotXField, depotYField, depotZField;
+    // Custom text fields (no Minecraft EditBox)
+    private CustomTextField stockField, priceAmountField;
 
-    // Slot config fields
-    private EditBox stockField, priceAmountField;
-
-    // Buttons that need visibility toggling
-    private Button applyBtn, restockBtn, clearBtn, changeItemBtn, changePriceBtn;
+    // Custom buttons (no Minecraft Button)
+    private CustomButton applyBtn, restockBtn, clearBtn, changeItemBtn, changePriceBtn;
 
     // Slot grid
     private final List<SlotWidget> slotWidgets = new ArrayList<>();
@@ -52,7 +49,7 @@ public class ShopAdminScreen extends Screen {
     private static final int PICKER_HEIGHT = 200;
     private static final int PICKER_COLS = 9;
     private static final int PICKER_SLOT_SIZE = 20;
-    private EditBox pickerSearchField;
+    private CustomTextField pickerSearchField;
     private final List<ItemStack> allItems = new ArrayList<>();
     private final List<ItemStack> filteredItems = new ArrayList<>();
     private int pickerScrollOffset = 0;
@@ -98,100 +95,52 @@ public class ShopAdminScreen extends Screen {
                 allItems.add(new ItemStack(item));
             }
         }
+        filteredItems.clear();
         filteredItems.addAll(allItems);
 
         pickerX = (width - PICKER_WIDTH) / 2;
         pickerY = (height - PICKER_HEIGHT) / 2;
 
-        initDepotFields();
         initSlotConfigFields();
         initSlotGrid();
         initPickerSearch();
     }
 
-    private void initDepotFields() {
-        BlockPos depotPos = shopBE.getDepotPos();
-        String dx = depotPos != null ? String.valueOf(depotPos.getX()) : "";
-        String dy = depotPos != null ? String.valueOf(depotPos.getY()) : "";
-        String dz = depotPos != null ? String.valueOf(depotPos.getZ()) : "";
-
-        int fieldY = topY + 28;
-        depotXField = new EditBox(font, leftX + 60, fieldY, 45, 14, Component.literal("X"));
-        depotXField.setValue(dx);
-        depotXField.setMaxLength(8);
-        addRenderableWidget(depotXField);
-
-        depotYField = new EditBox(font, leftX + 110, fieldY, 45, 14, Component.literal("Y"));
-        depotYField.setValue(dy);
-        depotYField.setMaxLength(8);
-        addRenderableWidget(depotYField);
-
-        depotZField = new EditBox(font, leftX + 160, fieldY, 45, 14, Component.literal("Z"));
-        depotZField.setValue(dz);
-        depotZField.setMaxLength(8);
-        addRenderableWidget(depotZField);
-
-        addRenderableWidget(Button.builder(Component.literal("Vincular"), btn -> linkDepot())
-                .bounds(leftX + 210, fieldY - 1, 60, 16)
-                .build());
-    }
-
     private void initSlotConfigFields() {
         int panelX = leftX + 170;
-        int panelY = topY + 140;
+        int panelY = topY + 109;
 
-        stockField = new EditBox(font, panelX + 80, panelY + 70, 50, 14, Component.literal("Stock"));
-        stockField.setMaxLength(8);
+        stockField = new CustomTextField(8);
+        stockField.setBounds(panelX + 80, panelY + 70, 50, 14);
         stockField.setValue("-1");
-        stockField.setVisible(false);
-        addRenderableWidget(stockField);
 
-        priceAmountField = new EditBox(font, panelX + 80, panelY + 90, 50, 14, Component.literal("Precio"));
-        priceAmountField.setMaxLength(8);
+        priceAmountField = new CustomTextField(8);
+        priceAmountField.setBounds(panelX + 80, panelY + 90, 50, 14);
         priceAmountField.setValue("1");
-        priceAmountField.setVisible(false);
-        addRenderableWidget(priceAmountField);
 
-        changeItemBtn = Button.builder(Component.literal("Cambiar Item"), btn -> {
+        changeItemBtn = new CustomButton("Cambiar Item", panelX + 5, panelY + 35, 130, 14, () -> {
             if (selectedSlot >= 0) {
                 currentMode = Mode.PICKING_DISPLAY_ITEM;
                 pickerScrollOffset = 0;
                 filterItems("");
                 pickerSearchField.setValue("");
-                pickerSearchField.setVisible(true);
                 pickerSearchField.setFocused(true);
             }
-        }).bounds(panelX + 5, panelY + 35, 130, 14).build();
-        changeItemBtn.visible = false;
-        addRenderableWidget(changeItemBtn);
+        });
 
-        changePriceBtn = Button.builder(Component.literal("Cambiar Precio Item"), btn -> {
+        changePriceBtn = new CustomButton("Cambiar Precio Item", panelX + 5, panelY + 52, 130, 14, () -> {
             if (selectedSlot >= 0) {
                 currentMode = Mode.PICKING_PRICE_ITEM;
                 pickerScrollOffset = 0;
                 filterItems("");
                 pickerSearchField.setValue("");
-                pickerSearchField.setVisible(true);
                 pickerSearchField.setFocused(true);
             }
-        }).bounds(panelX + 5, panelY + 52, 130, 14).build();
-        changePriceBtn.visible = false;
-        addRenderableWidget(changePriceBtn);
+        });
 
-        applyBtn = Button.builder(Component.literal("Aplicar"), btn -> applyStockAndPrice())
-                .bounds(panelX + 5, panelY + 110, 42, 14).build();
-        applyBtn.visible = false;
-        addRenderableWidget(applyBtn);
-
-        restockBtn = Button.builder(Component.literal("Restock"), btn -> restockSelected())
-                .bounds(panelX + 50, panelY + 110, 42, 14).build();
-        restockBtn.visible = false;
-        addRenderableWidget(restockBtn);
-
-        clearBtn = Button.builder(Component.literal("Quitar"), btn -> clearSelected())
-                .bounds(panelX + 95, panelY + 110, 42, 14).build();
-        clearBtn.visible = false;
-        addRenderableWidget(clearBtn);
+        applyBtn   = new CustomButton("Aplicar",  panelX + 5,  panelY + 110, 42, 14, this::applyStockAndPrice);
+        restockBtn = new CustomButton("Restock",  panelX + 50, panelY + 110, 42, 14, this::restockSelected);
+        clearBtn   = new CustomButton("Quitar",   panelX + 95, panelY + 110, 42, 14, this::clearSelected);
     }
 
     private void initSlotGrid() {
@@ -200,7 +149,7 @@ public class ShopAdminScreen extends Screen {
         int cols = 3;
 
         int g1x = leftX + 15;
-        int g1y = topY + 65;
+        int g1y = topY + 34;
         for (int i = 0; i < ShopBlockEntity.SLOTS_PER_GROUP; i++) {
             int row = i / cols;
             int col = i % cols;
@@ -208,7 +157,7 @@ public class ShopAdminScreen extends Screen {
         }
 
         int g2x = leftX + 15;
-        int g2y = topY + 175;
+        int g2y = topY + 144;
         for (int i = 0; i < ShopBlockEntity.SLOTS_PER_GROUP; i++) {
             int idx = ShopBlockEntity.SLOTS_PER_GROUP + i;
             int row = i / cols;
@@ -218,12 +167,9 @@ public class ShopAdminScreen extends Screen {
     }
 
     private void initPickerSearch() {
-        pickerSearchField = new EditBox(font, pickerX + 10, pickerY + 22, PICKER_WIDTH - 20, 14,
-                Component.literal("Buscar"));
-        pickerSearchField.setMaxLength(50);
+        pickerSearchField = new CustomTextField(50);
+        pickerSearchField.setBounds(pickerX + 10, pickerY + 22, PICKER_WIDTH - 20, 14);
         pickerSearchField.setResponder(this::filterItems);
-        pickerSearchField.setVisible(false);
-        addRenderableWidget(pickerSearchField);
     }
 
     private void filterItems(String query) {
@@ -244,11 +190,18 @@ public class ShopAdminScreen extends Screen {
 
     // ==================== RENDERING ====================
 
+    /**
+     * Override renderBackground to prevent the 1.21+ Gaussian blur effect.
+     * Instead of calling super (which calls renderBlurredBackground), we draw a
+     * solid translucent overlay so the world is darkened without blur.
+     */
+    @Override
+    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+        graphics.fill(0, 0, width, height, 0xCC000000);
+    }
+
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
-        // 1.20.5+ render() now calls renderBackground itself; we still call it
-        // explicitly to keep the original ordering (we draw our own panel on
-        // top of the background).
         renderBackground(g, mouseX, mouseY, partialTick);
 
         drawPanel(g, leftX, topY, GUI_WIDTH, GUI_HEIGHT);
@@ -256,13 +209,8 @@ public class ShopAdminScreen extends Screen {
         drawAccentBar(g, leftX, topY, GUI_WIDTH, 20);
         g.drawCenteredString(font, "★ Administración de Tienda ★", leftX + GUI_WIDTH / 2, topY + 6, 0xFFFFFF);
 
-        drawSectionHeader(g, leftX + 5, topY + 22, "◈ Depot");
-        renderDepotStatus(g);
-
-        g.fill(leftX + 5, topY + 48, leftX + GUI_WIDTH - 5, topY + 49, COL_BORDER);
-
-        drawSectionHeader(g, leftX + 10, topY + 53, "▾ Estante Izquierdo");
-        drawSectionHeader(g, leftX + 10, topY + 163, "▾ Estante Derecho");
+        drawSectionHeader(g, leftX + 10, topY + 22, "▾ Estante Izquierdo");
+        drawSectionHeader(g, leftX + 10, topY + 132, "▾ Estante Derecho");
 
         for (SlotWidget sw : slotWidgets) {
             ShopSlot slot = shopBE.getSlot(sw.slotIndex);
@@ -271,16 +219,16 @@ public class ShopAdminScreen extends Screen {
 
         renderSlotDetails(g, mouseX, mouseY);
 
-        boolean showConfig = selectedSlot >= 0;
-        stockField.setVisible(showConfig && currentMode == Mode.NORMAL);
-        priceAmountField.setVisible(showConfig && currentMode == Mode.NORMAL);
-        changeItemBtn.visible = showConfig && currentMode == Mode.NORMAL;
-        changePriceBtn.visible = showConfig && currentMode == Mode.NORMAL;
-        applyBtn.visible = showConfig && currentMode == Mode.NORMAL;
-        restockBtn.visible = showConfig && currentMode == Mode.NORMAL;
-        clearBtn.visible = showConfig && currentMode == Mode.NORMAL;
-
-        super.render(g, mouseX, mouseY, partialTick);
+        // Draw custom widgets when a slot is selected in NORMAL mode
+        if (selectedSlot >= 0 && currentMode == Mode.NORMAL) {
+            changeItemBtn.draw(g, font, mouseX, mouseY);
+            changePriceBtn.draw(g, font, mouseX, mouseY);
+            stockField.draw(g, font);
+            priceAmountField.draw(g, font);
+            applyBtn.draw(g, font, mouseX, mouseY);
+            restockBtn.draw(g, font, mouseX, mouseY);
+            clearBtn.draw(g, font, mouseX, mouseY);
+        }
 
         if (currentMode == Mode.NORMAL) {
             for (SlotWidget sw : slotWidgets) {
@@ -313,16 +261,6 @@ public class ShopAdminScreen extends Screen {
         g.drawString(font, text, x, y, COL_YELLOW);
     }
 
-    private void renderDepotStatus(GuiGraphics g) {
-        int statusX = leftX + 280;
-        int statusY = topY + 30;
-        if (shopBE.hasDepot()) {
-            g.drawString(font, "✓ Vinculado", statusX, statusY, COL_GREEN);
-        } else {
-            g.drawString(font, "✗ Sin vincular", statusX, statusY, COL_RED);
-        }
-    }
-
     private void renderSlotWidget(GuiGraphics g, SlotWidget sw, ShopSlot slot,
                                   boolean selected, int mouseX, int mouseY) {
         boolean hovered = mouseX >= sw.x && mouseX < sw.x + sw.size &&
@@ -347,9 +285,9 @@ public class ShopAdminScreen extends Screen {
 
     private void renderSlotDetails(GuiGraphics g, int mouseX, int mouseY) {
         int panelX = leftX + 110;
-        int panelY = topY + 53;
+        int panelY = topY + 22;
         int panelW = GUI_WIDTH - 115;
-        int panelH = GUI_HEIGHT - 58;
+        int panelH = GUI_HEIGHT - 27;
 
         g.fill(panelX, panelY, panelX + panelW, panelY + panelH, COL_BG_INNER);
         g.fill(panelX, panelY, panelX + 1, panelY + panelH, COL_BORDER);
@@ -411,7 +349,7 @@ public class ShopAdminScreen extends Screen {
         }
 
         int fieldLabelX = panelX + 10;
-        int fieldBaseY = topY + 140;
+        int fieldBaseY = topY + 109;
         g.drawString(font, "Max Stock:", fieldLabelX, fieldBaseY + 72, COL_TEXT_DIM);
         g.drawString(font, "Cant. Precio:", fieldLabelX, fieldBaseY + 92, COL_TEXT_DIM);
     }
@@ -427,6 +365,8 @@ public class ShopAdminScreen extends Screen {
         String pickerTitle = currentMode == Mode.PICKING_DISPLAY_ITEM ?
                 "Seleccionar Item" : "Seleccionar Item de Precio";
         g.drawCenteredString(font, pickerTitle, pickerX + PICKER_WIDTH / 2, pickerY + 5, 0xFFFFFF);
+
+        pickerSearchField.draw(g, font);
 
         int gridX = pickerX + 10;
         int gridY = pickerY + 42;
@@ -495,6 +435,28 @@ public class ShopAdminScreen extends Screen {
             return handlePickerClick(mouseX, mouseY);
         }
 
+        // Route clicks to custom buttons and text fields
+        if (selectedSlot >= 0) {
+            if (changeItemBtn.mouseClicked(mouseX, mouseY)) return true;
+            if (changePriceBtn.mouseClicked(mouseX, mouseY)) return true;
+            if (applyBtn.mouseClicked(mouseX, mouseY)) return true;
+            if (restockBtn.mouseClicked(mouseX, mouseY)) return true;
+            if (clearBtn.mouseClicked(mouseX, mouseY)) return true;
+            if (stockField.isMouseOver(mouseX, mouseY)) {
+                stockField.setFocused(true);
+                priceAmountField.setFocused(false);
+                return true;
+            }
+            if (priceAmountField.isMouseOver(mouseX, mouseY)) {
+                priceAmountField.setFocused(true);
+                stockField.setFocused(false);
+                return true;
+            }
+            // Clicking elsewhere unfocuses both fields
+            stockField.setFocused(false);
+            priceAmountField.setFocused(false);
+        }
+
         for (SlotWidget sw : slotWidgets) {
             if (mouseX >= sw.x && mouseX < sw.x + sw.size &&
                     mouseY >= sw.y && mouseY < sw.y + sw.size) {
@@ -509,7 +471,7 @@ public class ShopAdminScreen extends Screen {
     private boolean handlePickerClick(double mouseX, double mouseY) {
         if (pickerSearchField.isMouseOver(mouseX, mouseY)) {
             pickerSearchField.setFocused(true);
-            return pickerSearchField.mouseClicked(mouseX, mouseY, 0);
+            return true;
         }
 
         int gridX = pickerX + 10;
@@ -580,8 +542,8 @@ public class ShopAdminScreen extends Screen {
 
     private void closeItemPicker() {
         currentMode = Mode.NORMAL;
-        pickerSearchField.setVisible(false);
         pickerSearchField.setValue("");
+        pickerSearchField.setFocused(false);
     }
 
     private void selectSlot(int slotIndex) {
@@ -621,33 +583,26 @@ public class ShopAdminScreen extends Screen {
                 closeItemPicker();
                 return true;
             }
-            if (pickerSearchField.isFocused()) {
-                return pickerSearchField.keyPressed(keyCode, scanCode, modifiers);
-            }
+            if (pickerSearchField.keyPressed(keyCode)) return true;
+        } else {
+            if (stockField.keyPressed(keyCode)) return true;
+            if (priceAmountField.keyPressed(keyCode)) return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
-        if (currentMode != Mode.NORMAL && pickerSearchField.isFocused()) {
-            return pickerSearchField.charTyped(codePoint, modifiers);
+        if (currentMode != Mode.NORMAL) {
+            if (pickerSearchField.charTyped(codePoint)) return true;
+        } else {
+            if (stockField.charTyped(codePoint)) return true;
+            if (priceAmountField.charTyped(codePoint)) return true;
         }
         return super.charTyped(codePoint, modifiers);
     }
 
     // ==================== ACTIONS ====================
-
-    private void linkDepot() {
-        try {
-            int x = Integer.parseInt(depotXField.getValue().trim());
-            int y = Integer.parseInt(depotYField.getValue().trim());
-            int z = Integer.parseInt(depotZField.getValue().trim());
-            ModNetworking.sendLinkDepot(shopPos, new BlockPos(x, y, z));
-        } catch (NumberFormatException e) {
-            // Invalid coordinates
-        }
-    }
 
     private void applyStockAndPrice() {
         if (selectedSlot < 0) return;
@@ -679,11 +634,142 @@ public class ShopAdminScreen extends Screen {
         if (selectedSlot < 0) return;
         ModNetworking.sendClearSlot(shopPos, selectedSlot);
         selectedSlot = -1;
+        stockField.setFocused(false);
+        priceAmountField.setFocused(false);
     }
 
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    // ==================== CUSTOM WIDGETS ====================
+
+    /**
+     * Text input field drawn entirely with GuiGraphics — replaces Minecraft's EditBox.
+     */
+    private static class CustomTextField {
+        int x, y, w, h;
+        final int maxLength;
+        private String value = "";
+        private int cursorPos = 0;
+        boolean focused = false;
+        private Consumer<String> responder;
+
+        CustomTextField(int maxLength) {
+            this.maxLength = maxLength;
+        }
+
+        void setBounds(int x, int y, int w, int h) {
+            this.x = x; this.y = y; this.w = w; this.h = h;
+        }
+
+        void setResponder(Consumer<String> r) { this.responder = r; }
+
+        void setValue(String v) {
+            value = (v == null) ? "" : v;
+            cursorPos = Math.min(cursorPos, value.length());
+        }
+
+        String getValue() { return value; }
+
+        void setFocused(boolean f) {
+            focused = f;
+            if (f) cursorPos = value.length();
+        }
+
+        boolean isMouseOver(double mx, double my) {
+            return mx >= x && mx < x + w && my >= y && my < y + h;
+        }
+
+        boolean charTyped(char c) {
+            if (!focused || c < ' ' || value.length() >= maxLength) return false;
+            value = value.substring(0, cursorPos) + c + value.substring(cursorPos);
+            cursorPos++;
+            if (responder != null) responder.accept(value);
+            return true;
+        }
+
+        boolean keyPressed(int keyCode) {
+            if (!focused) return false;
+            return switch (keyCode) {
+                case 259 -> { // BACKSPACE
+                    if (cursorPos > 0) {
+                        value = value.substring(0, cursorPos - 1) + value.substring(cursorPos);
+                        cursorPos--;
+                        if (responder != null) responder.accept(value);
+                        yield true;
+                    }
+                    yield false;
+                }
+                case 261 -> { // DELETE
+                    if (cursorPos < value.length()) {
+                        value = value.substring(0, cursorPos) + value.substring(cursorPos + 1);
+                        if (responder != null) responder.accept(value);
+                        yield true;
+                    }
+                    yield false;
+                }
+                case 263 -> { if (cursorPos > 0) cursorPos--; yield true; }            // LEFT
+                case 262 -> { if (cursorPos < value.length()) cursorPos++; yield true; } // RIGHT
+                case 268 -> { cursorPos = 0; yield true; }                               // HOME
+                case 269 -> { cursorPos = value.length(); yield true; }                  // END
+                default -> false;
+            };
+        }
+
+        void draw(GuiGraphics g, Font font) {
+            // Background
+            g.fill(x, y, x + w, y + h, 0xFF111122);
+            // Border: accent when focused, dim otherwise
+            int bc = focused ? COL_ACCENT : COL_BORDER;
+            g.fill(x,         y,         x + w,     y + 1,     bc);
+            g.fill(x,         y + h - 1, x + w,     y + h,     bc);
+            g.fill(x,         y,         x + 1,     y + h,     bc);
+            g.fill(x + w - 1, y,         x + w,     y + h,     bc);
+            // Text
+            int ty = y + (h - font.lineHeight) / 2;
+            g.drawString(font, value, x + 3, ty, COL_TEXT, false);
+            // Blinking cursor (530 ms half-period)
+            if (focused && (System.currentTimeMillis() / 530) % 2 == 0) {
+                int cx = x + 3 + font.width(value.substring(0, cursorPos));
+                g.fill(cx, y + 2, cx + 1, y + h - 2, COL_TEXT);
+            }
+        }
+    }
+
+    /**
+     * Button drawn entirely with GuiGraphics — replaces Minecraft's Button component.
+     */
+    private static class CustomButton {
+        int x, y, w, h;
+        final String label;
+        private final Runnable action;
+
+        CustomButton(String label, int x, int y, int w, int h, Runnable action) {
+            this.label = label;
+            this.x = x; this.y = y; this.w = w; this.h = h;
+            this.action = action;
+        }
+
+        boolean isMouseOver(double mx, double my) {
+            return mx >= x && mx < x + w && my >= y && my < y + h;
+        }
+
+        boolean mouseClicked(double mx, double my) {
+            if (isMouseOver(mx, my)) { action.run(); return true; }
+            return false;
+        }
+
+        void draw(GuiGraphics g, Font font, int mouseX, int mouseY) {
+            boolean hovered = isMouseOver(mouseX, mouseY);
+            int bg     = hovered ? COL_ACCENT_DIM : 0xFF1A1A2E;
+            int border = hovered ? COL_ACCENT      : COL_BORDER;
+            g.fill(x,     y,     x + w,     y + h,     border);
+            g.fill(x + 1, y + 1, x + w - 1, y + h - 1, bg);
+            int tc = hovered ? 0xFFFFFFFF : COL_TEXT;
+            g.drawCenteredString(font, label, x + w / 2, y + (h - font.lineHeight) / 2, tc);
+        }
     }
 
     // ==================== INNER CLASSES ====================

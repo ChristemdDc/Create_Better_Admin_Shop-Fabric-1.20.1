@@ -4,6 +4,7 @@ import com.example.betteradminshop.network.ModNetworking;
 import com.example.betteradminshop.registry.ModBlockEntities;
 import com.example.betteradminshop.registry.ModBlocks;
 import com.example.betteradminshop.registry.ModCreativeTab;
+import com.example.betteradminshop.registry.ModSounds;
 
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
@@ -21,10 +22,11 @@ public class BetterAdminShop {
     public BetterAdminShop(IEventBus modBus) {
         LOGGER.info("Create addon mod [{}] is loading alongside Create!", NAME);
 
-        // Register blocks, block entities and creative tab on the mod event bus
+        // Register blocks, block entities, creative tab and sounds on the mod event bus
         ModBlocks.register(modBus);
         ModBlockEntities.register(modBus);
         ModCreativeTab.register(modBus);
+        ModSounds.register(modBus);
 
         // Register network payloads
         modBus.addListener(ModNetworking::register);

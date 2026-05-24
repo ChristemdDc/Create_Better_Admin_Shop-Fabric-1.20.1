@@ -17,6 +17,7 @@ java {
 }
 
 repositories {
+    mavenCentral()
     mavenLocal()
     maven { url = 'https://maven.createmod.net' }              // Create + Ponder + Flywheel
     maven { url = 'https://maven.ithundxr.dev/snapshots' }     // Registrate
@@ -81,6 +82,9 @@ dependencies {
     compileOnly    "dev.engine-room.flywheel:flywheel-neoforge-api-${minecraft_version}:${flywheel_version}"
     runtimeOnly    "dev.engine-room.flywheel:flywheel-neoforge-${minecraft_version}:${flywheel_version}"
     implementation "com.tterrag.registrate:Registrate:${registrate_version}"
+
+    // SQLite JDBC – bundled inside the mod jar via JarJar
+    jarJar(implementation("org.xerial:sqlite-jdbc:3.49.1.0"))
 }
 
 tasks.withType(JavaCompile).configureEach {

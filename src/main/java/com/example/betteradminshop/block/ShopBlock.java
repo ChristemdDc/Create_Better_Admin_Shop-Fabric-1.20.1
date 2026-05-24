@@ -1,6 +1,7 @@
 package com.example.betteradminshop.block;
 
 import com.example.betteradminshop.client.ShopAdminScreen;
+import com.example.betteradminshop.registry.ModSounds;
 import com.simibubi.create.AllItems;
 
 import net.minecraft.core.BlockPos;
@@ -8,6 +9,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.ItemInteractionResult;
@@ -251,18 +253,29 @@ public class ShopBlock extends BaseEntityBlock {
         }
 
         if (!level.isClientSide && player instanceof ServerPlayer serverPlayer) {
-            if (!shopBE.hasDepot()) {
-                player.displayClientMessage(
-                        Component.literal("§eLa tienda no está vinculada a un Depot."), true);
-                return InteractionResult.CONSUME;
-            }
-
             BlockState originState = level.getBlockState(shopBE.getBlockPos());
             Vec3 eyePos = player.getEyePosition();
             Vec3 lookDir = player.getLookAngle();
             int clickedSlot = shopBE.getClickedSlot(eyePos, lookDir, originState);
 
-            if (clickedSlot == -2) {
+            if (clickedSlot == -3) {
+                // Entrega zone: try to pick up the current delivery
+                String result = shopBE.tryPickupDelivery(serverPlayer);
+                if (result == null) {
+                    player.displayClientMessage(
+                            Component.literal("§a¡Paquete recogido!"), true);
+                } else if (result.equals("no_deliveries")) {
+                    player.displayClientMessage(
+                            Component.literal("§eNo hay entregas pendientes."), true);
+                } else if (result.startsWith("protected:")) {
+                    String timeLeft = result.substring("protected:".length());
+                    player.displayClientMessage(
+                            Component.literal("§cEste paquete está protegido. Tiempo restante: " + timeLeft), true);
+                }
+                return InteractionResult.CONSUME;
+
+            } else if (clickedSlot == -2) {
+                // Confirmarcompra panel: process current order
                 ShopOrder order = shopBE.getOrCreateOrder(player.getUUID());
                 if (order.isEmpty()) {
                     player.displayClientMessage(
@@ -277,8 +290,11 @@ public class ShopBlock extends BaseEntityBlock {
                 } else {
                     removeShoppingListFromInventory(serverPlayer);
                     player.displayClientMessage(
-                            Component.literal("§a¡Compra realizada! Tu paquete fue depositado en el Depot."), true);
+                            Component.literal("§a¡Compra realizada! Tu paquete está en el área de entrega."), true);
+                    level.playSound(null, shopBE.getBlockPos(), ModSounds.DESK_BELL.get(),
+                            SoundSource.BLOCKS, 1.0f, 1.0f);
                 }
+
             } else if (clickedSlot >= 0) {
                 ShopSlot slot = shopBE.getSlot(clickedSlot);
                 if (slot != null && !slot.isEmpty()) {

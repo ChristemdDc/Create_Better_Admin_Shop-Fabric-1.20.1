@@ -1,12 +1,15 @@
 package com.example.betteradminshop;
 
+import com.example.betteradminshop.client.EntregaHudOverlay;
 import com.example.betteradminshop.client.ShopBlockEntityRenderer;
 import com.example.betteradminshop.registry.ModBlockEntities;
 
+import net.minecraft.resources.ResourceLocation;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
+import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 
 /**
  * Client-only setup. Equivalent of the Fabric {@code ClientModInitializer}.
@@ -22,5 +25,12 @@ public final class BetterAdminShopClient {
         event.registerBlockEntityRenderer(ModBlockEntities.SHOP_BLOCK_ENTITY.get(),
                 ShopBlockEntityRenderer::new);
         BetterAdminShop.LOGGER.info("{} client initialized.", BetterAdminShop.NAME);
+    }
+
+    @SubscribeEvent
+    public static void registerGuiLayers(RegisterGuiLayersEvent event) {
+        event.registerAboveAll(
+                ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "entrega_hud"),
+                new EntregaHudOverlay());
     }
 }
