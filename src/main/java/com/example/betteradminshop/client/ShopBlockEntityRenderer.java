@@ -121,7 +121,8 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
 
     private void renderShopItem(PoseStack poseStack, MultiBufferSource bufferSource,
                                 ShopSlot slot, float[] pos, int packedLight, int packedOverlay) {
-        ItemStack displayItem = slot.getDisplayItem();
+        // Usa el ítem de render (puede ser distinto al que realmente se vende)
+        ItemStack displayItem = slot.getRenderItem();
         if (displayItem.isEmpty()) return;
 
         poseStack.pushPose();

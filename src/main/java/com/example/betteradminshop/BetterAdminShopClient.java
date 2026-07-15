@@ -2,6 +2,7 @@ package com.example.betteradminshop;
 
 import com.example.betteradminshop.client.EntregaHudOverlay;
 import com.example.betteradminshop.client.ShopBlockEntityRenderer;
+import com.example.betteradminshop.client.SlotInfoHudOverlay;
 import com.example.betteradminshop.registry.ModBlockEntities;
 
 import net.minecraft.resources.ResourceLocation;
@@ -32,5 +33,8 @@ public final class BetterAdminShopClient {
         event.registerAboveAll(
                 ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "entrega_hud"),
                 new EntregaHudOverlay());
+        event.registerAboveAll(
+                ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "slot_info_hud"),
+                new SlotInfoHudOverlay());
     }
 }

@@ -2,6 +2,7 @@ package com.example.betteradminshop.network;
 
 import com.example.betteradminshop.BetterAdminShop;
 import com.example.betteradminshop.block.ShopBlockEntity;
+import com.example.betteradminshop.block.ShopSlot;
 import com.example.betteradminshop.command.AdminShopCommand;
 
 import net.minecraft.core.BlockPos;
@@ -31,37 +32,52 @@ public final class ModNetworking {
 
     // -------- Payload records ----------------------------------------------
 
-    public record SetSlotItem(BlockPos pos, int slotIndex, ItemStack item) implements CustomPacketPayload {
-        public static final Type<SetSlotItem> TYPE = new Type<>(BetterAdminShop.id("set_slot_item"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlotItem> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, SetSlotItem::pos,
-                ByteBufCodecs.VAR_INT, SetSlotItem::slotIndex,
-                ItemStack.OPTIONAL_STREAM_CODEC, SetSlotItem::item,
-                SetSlotItem::new
-        );
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
-    }
+    /**
+     * Configuración completa de un slot en un solo paquete: ítem vendido,
+     * ítem de render (override opcional), cantidad por venta, hasta dos
+     * ítems de precio y stock máximo.
+     */
+    public record SetSlotConfig(BlockPos pos, int slotIndex, boolean isCompra,
+                                ItemStack saleItem, ItemStack renderOverride, int sellAmount,
+                                ItemStack priceItem, int priceAmount,
+                                ItemStack priceItem2, int priceAmount2,
+                                int maxStock) implements CustomPacketPayload {
+        public static final Type<SetSlotConfig> TYPE = new Type<>(BetterAdminShop.id("set_slot_config"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlotConfig> STREAM_CODEC =
+                new StreamCodec<>() {
+                    @Override
+                    public SetSlotConfig decode(RegistryFriendlyByteBuf buf) {
+                        BlockPos pos = BlockPos.STREAM_CODEC.decode(buf);
+                        int slotIndex = buf.readVarInt();
+                        boolean isCompra = buf.readBoolean();
+                        ItemStack saleItem = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        ItemStack renderOverride = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int sellAmount = buf.readVarInt();
+                        ItemStack priceItem = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int priceAmount = buf.readVarInt();
+                        ItemStack priceItem2 = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int priceAmount2 = buf.readVarInt();
+                        int maxStock = buf.readInt();
+                        return new SetSlotConfig(pos, slotIndex, isCompra, saleItem, renderOverride, sellAmount,
+                                priceItem, priceAmount, priceItem2, priceAmount2, maxStock);
+                    }
 
-    public record SetSlotPrice(BlockPos pos, int slotIndex, ItemStack priceItem, int priceAmount) implements CustomPacketPayload {
-        public static final Type<SetSlotPrice> TYPE = new Type<>(BetterAdminShop.id("set_slot_price"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlotPrice> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, SetSlotPrice::pos,
-                ByteBufCodecs.VAR_INT, SetSlotPrice::slotIndex,
-                ItemStack.OPTIONAL_STREAM_CODEC, SetSlotPrice::priceItem,
-                ByteBufCodecs.VAR_INT, SetSlotPrice::priceAmount,
-                SetSlotPrice::new
-        );
-        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
-    }
-
-    public record SetSlotStock(BlockPos pos, int slotIndex, int maxStock) implements CustomPacketPayload {
-        public static final Type<SetSlotStock> TYPE = new Type<>(BetterAdminShop.id("set_slot_stock"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlotStock> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, SetSlotStock::pos,
-                ByteBufCodecs.VAR_INT, SetSlotStock::slotIndex,
-                ByteBufCodecs.VAR_INT, SetSlotStock::maxStock,
-                SetSlotStock::new
-        );
+                    @Override
+                    public void encode(RegistryFriendlyByteBuf buf, SetSlotConfig p) {
+                        BlockPos.STREAM_CODEC.encode(buf, p.pos());
+                        buf.writeVarInt(p.slotIndex());
+                        buf.writeBoolean(p.isCompra());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.saleItem());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.renderOverride());
+                        buf.writeVarInt(p.sellAmount());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.priceItem());
+                        buf.writeVarInt(p.priceAmount());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.priceItem2());
+                        buf.writeVarInt(p.priceAmount2());
+                        // maxStock puede ser -1 (infinito): writeInt, no VarInt negativo
+                        buf.writeInt(p.maxStock());
+                    }
+                };
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
@@ -91,12 +107,10 @@ public final class ModNetworking {
         // executesOn(MAIN) so handlers fire on the server thread directly — no
         // need for context.enqueueWork(...). Mirrors the server.execute(...) in
         // the Fabric version.
-        PayloadRegistrar r = event.registrar("1");
-        r.playToServer(SetSlotItem.TYPE,  SetSlotItem.STREAM_CODEC,  ModNetworking::handleSetSlotItem);
-        r.playToServer(SetSlotPrice.TYPE, SetSlotPrice.STREAM_CODEC, ModNetworking::handleSetSlotPrice);
-        r.playToServer(SetSlotStock.TYPE, SetSlotStock.STREAM_CODEC, ModNetworking::handleSetSlotStock);
-        r.playToServer(RestockSlot.TYPE,  RestockSlot.STREAM_CODEC,  ModNetworking::handleRestockSlot);
-        r.playToServer(ClearSlot.TYPE,    ClearSlot.STREAM_CODEC,    ModNetworking::handleClearSlot);
+        PayloadRegistrar r = event.registrar("2");
+        r.playToServer(SetSlotConfig.TYPE, SetSlotConfig.STREAM_CODEC, ModNetworking::handleSetSlotConfig);
+        r.playToServer(RestockSlot.TYPE,   RestockSlot.STREAM_CODEC,   ModNetworking::handleRestockSlot);
+        r.playToServer(ClearSlot.TYPE,     ClearSlot.STREAM_CODEC,     ModNetworking::handleClearSlot);
 
         // Records panel
         r.playToServer(RequestRecordsPayload.TYPE, RequestRecordsPayload.STREAM_CODEC, ModNetworking::handleRequestRecords);
@@ -105,25 +119,16 @@ public final class ModNetworking {
 
     // -------- Server-side handlers (run on main thread) --------------------
 
-    private static void handleSetSlotItem(SetSlotItem msg, IPayloadContext ctx) {
+    private static void handleSetSlotConfig(SetSlotConfig msg, IPayloadContext ctx) {
         ServerPlayer player = asServer(ctx);
         if (player == null || !player.hasPermissions(4)) return;
         ShopBlockEntity shop = getShop(player, msg.pos());
-        if (shop != null) shop.setSlotItem(msg.slotIndex(), msg.item());
-    }
-
-    private static void handleSetSlotPrice(SetSlotPrice msg, IPayloadContext ctx) {
-        ServerPlayer player = asServer(ctx);
-        if (player == null || !player.hasPermissions(4)) return;
-        ShopBlockEntity shop = getShop(player, msg.pos());
-        if (shop != null) shop.setSlotPrice(msg.slotIndex(), msg.priceItem(), msg.priceAmount());
-    }
-
-    private static void handleSetSlotStock(SetSlotStock msg, IPayloadContext ctx) {
-        ServerPlayer player = asServer(ctx);
-        if (player == null || !player.hasPermissions(4)) return;
-        ShopBlockEntity shop = getShop(player, msg.pos());
-        if (shop != null) shop.setSlotMaxStock(msg.slotIndex(), msg.maxStock());
+        if (shop != null) {
+            ShopSlot.Type type = msg.isCompra() ? ShopSlot.Type.COMPRA : ShopSlot.Type.VENTA;
+            shop.applySlotConfig(msg.slotIndex(), type, msg.saleItem(), msg.renderOverride(),
+                    msg.sellAmount(), msg.priceItem(), msg.priceAmount(),
+                    msg.priceItem2(), msg.priceAmount2(), msg.maxStock());
+        }
     }
 
     private static void handleRestockSlot(RestockSlot msg, IPayloadContext ctx) {
@@ -146,7 +151,7 @@ public final class ModNetworking {
         ServerPlayer player = asServer(ctx);
         if (player == null || !player.hasPermissions(4)) return;
         ctx.enqueueWork(() -> AdminShopCommand.openRecords(
-                player, msg.page(), msg.playerFilter(), msg.sortColumn(), msg.ascending()));
+                player, msg.page(), msg.playerFilter(), msg.sortColumn(), msg.ascending(), msg.typeFilter()));
     }
 
     /** Runs client-side — opens or refreshes the AdminRecordsScreen. */
@@ -179,16 +184,12 @@ public final class ModNetworking {
 
     // -------- Client-side send helpers -------------------------------------
 
-    public static void sendSetSlotItem(BlockPos pos, int slotIndex, ItemStack item) {
-        PacketDistributor.sendToServer(new SetSlotItem(pos, slotIndex, item));
-    }
-
-    public static void sendSetSlotPrice(BlockPos pos, int slotIndex, ItemStack priceItem, int priceAmount) {
-        PacketDistributor.sendToServer(new SetSlotPrice(pos, slotIndex, priceItem, priceAmount));
-    }
-
-    public static void sendSetSlotStock(BlockPos pos, int slotIndex, int maxStock) {
-        PacketDistributor.sendToServer(new SetSlotStock(pos, slotIndex, maxStock));
+    public static void sendSetSlotConfig(BlockPos pos, int slotIndex, boolean isCompra,
+                                         ItemStack saleItem, ItemStack renderOverride, int sellAmount,
+                                         ItemStack priceItem, int priceAmount,
+                                         ItemStack priceItem2, int priceAmount2, int maxStock) {
+        PacketDistributor.sendToServer(new SetSlotConfig(pos, slotIndex, isCompra, saleItem, renderOverride,
+                sellAmount, priceItem, priceAmount, priceItem2, priceAmount2, maxStock));
     }
 
     public static void sendRestockSlot(BlockPos pos, int slotIndex) {

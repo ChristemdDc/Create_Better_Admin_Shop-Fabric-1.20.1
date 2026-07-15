@@ -17,11 +17,14 @@ import java.util.List;
  */
 public record RecordsDataPayload(
         List<PurchaseRecord> records,
-        int    totalCount,
+        int    totalCount,      // total con los filtros actuales (para paginar)
+        int    ventaCount,      // total de ventas (con filtro de jugador)
+        int    compraCount,     // total de compras (con filtro de jugador)
         int    page,
         String sortColumn,
         boolean ascending,
-        String  playerFilter
+        String  playerFilter,
+        String  typeFilter      // "venta", "compra" o "" (todas)
 ) implements CustomPacketPayload {
 
     public static final int PAGE_SIZE = 10;
@@ -37,11 +40,14 @@ public record RecordsDataPayload(
                     List<PurchaseRecord> recs = new ArrayList<>(size);
                     for (int i = 0; i < size; i++) recs.add(PurchaseRecord.STREAM_CODEC.decode(buf));
                     int total     = buf.readVarInt();
+                    int ventas    = buf.readVarInt();
+                    int compras   = buf.readVarInt();
                     int page      = buf.readVarInt();
                     String sort   = readStr(buf);
                     boolean asc   = buf.readBoolean();
                     String filter = readStr(buf);
-                    return new RecordsDataPayload(recs, total, page, sort, asc, filter);
+                    String type   = readStr(buf);
+                    return new RecordsDataPayload(recs, total, ventas, compras, page, sort, asc, filter, type);
                 }
 
                 @Override
@@ -49,10 +55,13 @@ public record RecordsDataPayload(
                     buf.writeVarInt(p.records().size());
                     for (PurchaseRecord r : p.records()) PurchaseRecord.STREAM_CODEC.encode(buf, r);
                     buf.writeVarInt(p.totalCount());
+                    buf.writeVarInt(p.ventaCount());
+                    buf.writeVarInt(p.compraCount());
                     buf.writeVarInt(p.page());
                     writeStr(buf, p.sortColumn());
                     buf.writeBoolean(p.ascending());
                     writeStr(buf, p.playerFilter());
+                    writeStr(buf, p.typeFilter());
                 }
 
                 private static String readStr(RegistryFriendlyByteBuf buf) {

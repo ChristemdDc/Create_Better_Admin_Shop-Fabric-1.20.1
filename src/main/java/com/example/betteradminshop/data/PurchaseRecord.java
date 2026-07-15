@@ -19,8 +19,13 @@ public record PurchaseRecord(
         String itemDisplayName,  // e.g. "Cherry Planks"
         int    quantity,
         String priceSummary,     // e.g. "5× Diamond, 2× Emerald"
-        long   purchaseTimestampUtc   // System.currentTimeMillis()
+        long   purchaseTimestampUtc,  // System.currentTimeMillis()
+        String transactionType   // "venta" (la tienda vende) o "compra" (la tienda compra)
 ) {
+
+    public boolean isCompra() {
+        return "compra".equals(transactionType);
+    }
 
     // ── Network codec (manual to handle >6 fields) ───────────────────────────
 
@@ -37,7 +42,8 @@ public record PurchaseRecord(
                             readStr(buf),
                             buf.readVarInt(),
                             readStr(buf),
-                            buf.readLong()
+                            buf.readLong(),
+                            readStr(buf)
                     );
                 }
 
@@ -52,6 +58,7 @@ public record PurchaseRecord(
                     buf.writeVarInt(r.quantity());
                     writeStr(buf, r.priceSummary());
                     buf.writeLong(r.purchaseTimestampUtc());
+                    writeStr(buf, r.transactionType() == null ? "venta" : r.transactionType());
                 }
 
                 private static String readStr(RegistryFriendlyByteBuf buf) {

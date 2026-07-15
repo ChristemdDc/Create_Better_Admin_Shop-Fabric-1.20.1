@@ -88,8 +88,17 @@ public class DeliveryEntry {
         tag.putLong("ProtectionStartMs", protectionStartMs);
         ListTag itemsList = new ListTag();
         for (ItemStack stack : items) {
-            if (!stack.isEmpty()) {
-                itemsList.add(stack.save(provider));
+            if (stack.isEmpty()) continue;
+            // El codec de ItemStack (1.20.5+) solo admite counts 1..99; un
+            // count mayor lanza excepción y corrompe el guardado del bloque.
+            // Dividimos por maxStackSize por si quedaron stacks antiguos sin dividir.
+            int remaining = stack.getCount();
+            int stackSize = Math.max(1, Math.min(stack.getMaxStackSize(), 99));
+            while (remaining > 0) {
+                int count = Math.min(remaining, stackSize);
+                ItemStack part = stack.copyWithCount(count);
+                itemsList.add(part.save(provider));
+                remaining -= count;
             }
         }
         tag.put("Items", itemsList);

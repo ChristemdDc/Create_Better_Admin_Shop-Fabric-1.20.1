@@ -335,22 +335,34 @@ public class ShopBlock extends BaseEntityBlock {
         }
 
         Map<Integer, Integer> items = order.getItems();
-        Map<ItemStack, Integer> totalCost = order.calculateTotalPrice(shopBE.getSlots());
+        Map<ItemStack, Integer> required = order.computeRequired(shopBE.getSlots());
+        Map<ItemStack, Integer> rewards  = order.computeRewards(shopBE.getSlots());
 
         List<Component> lines = new ArrayList<>();
         for (Map.Entry<Integer, Integer> entry : items.entrySet()) {
             ShopSlot slot = shopBE.getSlot(entry.getKey());
             if (slot != null && !slot.isEmpty()) {
+                int units = entry.getValue() * slot.getSellAmount();
+                String tag = slot.isCompra() ? "§b[Compra] §r" : "§a[Venta] §r";
                 lines.add(Component.literal(
-                        slot.getDisplayItem().getHoverName().getString() + " x" + entry.getValue())
+                        tag + slot.getDisplayItem().getHoverName().getString() + " x" + units)
                         .withStyle(s -> s.withItalic(false)));
             }
         }
 
-        if (!totalCost.isEmpty()) {
+        if (!required.isEmpty()) {
             lines.add(Component.literal("").withStyle(s -> s.withItalic(false)));
-            lines.add(Component.literal("§7Coste total:").withStyle(s -> s.withItalic(false)));
-            for (Map.Entry<ItemStack, Integer> entry : totalCost.entrySet()) {
+            lines.add(Component.literal("§7Entregas:").withStyle(s -> s.withItalic(false)));
+            for (Map.Entry<ItemStack, Integer> entry : required.entrySet()) {
+                lines.add(Component.literal("§c" + entry.getKey().getHoverName().getString()
+                        + " x" + entry.getValue()).withStyle(s -> s.withItalic(false)));
+            }
+        }
+
+        if (!rewards.isEmpty()) {
+            lines.add(Component.literal("").withStyle(s -> s.withItalic(false)));
+            lines.add(Component.literal("§7Recibes:").withStyle(s -> s.withItalic(false)));
+            for (Map.Entry<ItemStack, Integer> entry : rewards.entrySet()) {
                 lines.add(Component.literal("§6" + entry.getKey().getHoverName().getString()
                         + " x" + entry.getValue()).withStyle(s -> s.withItalic(false)));
             }

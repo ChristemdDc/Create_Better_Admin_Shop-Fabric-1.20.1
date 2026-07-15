@@ -59,7 +59,7 @@ public final class AdminShopCommand {
                                         ctx.getSource().sendFailure(Component.literal("Solo jugadores pueden usar este comando."));
                                         return 0;
                                     }
-                                    return openRecords(player, 0, "", "purchase_timestamp_utc", false);
+                                    return openRecords(player, 0, "", "purchase_timestamp_utc", false, "");
                                 }))
         );
     }
@@ -68,7 +68,7 @@ public final class AdminShopCommand {
 
     /** Called by the command AND by the request packet handler on page/filter change. */
     public static int openRecords(ServerPlayer player, int page, String playerFilter,
-                                  String sortColumn, boolean ascending) {
+                                  String sortColumn, boolean ascending, String typeFilter) {
         PurchaseDatabase db = PurchaseDatabase.getInstance();
         if (!db.isReady()) {
             player.sendSystemMessage(Component.literal(
@@ -77,11 +77,14 @@ public final class AdminShopCommand {
         }
 
         int pageSize = RecordsDataPayload.PAGE_SIZE;
-        List<PurchaseRecord> records = db.getRecords(page, pageSize, sortColumn, ascending, playerFilter);
-        int total = db.getTotalCount(playerFilter);
+        List<PurchaseRecord> records = db.getRecords(page, pageSize, sortColumn, ascending, playerFilter, typeFilter);
+        int total   = db.getTotalCount(playerFilter, typeFilter);
+        int ventas  = db.getTotalCount(playerFilter, PurchaseDatabase.TYPE_VENTA);
+        int compras = db.getTotalCount(playerFilter, PurchaseDatabase.TYPE_COMPRA);
 
         PacketDistributor.sendToPlayer(player,
-                new RecordsDataPayload(records, total, page, sortColumn, ascending, playerFilter));
+                new RecordsDataPayload(records, total, ventas, compras, page,
+                        sortColumn, ascending, playerFilter, typeFilter));
 
         return Command.SINGLE_SUCCESS;
     }

@@ -86,6 +86,11 @@ public class PurchaseDatabase {
 
     // ── Schema ────────────────────────────────────────────────────────────────
 
+    /** Tipo de transacción: la tienda VENDE al jugador. */
+    public static final String TYPE_VENTA = "venta";
+    /** Tipo de transacción: la tienda COMPRA al jugador. */
+    public static final String TYPE_COMPRA = "compra";
+
     private void createTables() throws SQLException {
         try (Statement st = conn.createStatement()) {
             st.execute("""
@@ -102,31 +107,53 @@ public class PurchaseDatabase {
                     shop_x                INTEGER,
                     shop_y                INTEGER,
                     shop_z                INTEGER,
-                    shop_world            TEXT
+                    shop_world            TEXT,
+                    transaction_type      TEXT    NOT NULL DEFAULT 'venta'
                 )
                 """);
             st.execute("CREATE INDEX IF NOT EXISTS idx_player    ON purchase_records(player_uuid)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON purchase_records(purchase_timestamp_utc)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_item      ON purchase_records(item_id)");
+            migrateAddTypeColumn(st);
+            st.execute("CREATE INDEX IF NOT EXISTS idx_type      ON purchase_records(transaction_type)");
+        }
+    }
+
+    /** Migración: bases de datos anteriores no tienen transaction_type. */
+    private void migrateAddTypeColumn(Statement st) throws SQLException {
+        boolean hasColumn = false;
+        try (ResultSet rs = st.executeQuery("PRAGMA table_info(purchase_records)")) {
+            while (rs.next()) {
+                if ("transaction_type".equalsIgnoreCase(rs.getString("name"))) {
+                    hasColumn = true;
+                    break;
+                }
+            }
+        }
+        if (!hasColumn) {
+            st.execute("ALTER TABLE purchase_records ADD COLUMN transaction_type TEXT NOT NULL DEFAULT 'venta'");
+            BetterAdminShop.LOGGER.info("[BetterAdminShop] Migración: columna transaction_type añadida.");
         }
     }
 
     // ── Write ─────────────────────────────────────────────────────────────────
 
     /**
-     * Logs one purchased item (a single row per item in the order).
+     * Registra una transacción de cualquier tipo ({@link #TYPE_VENTA} o
+     * {@link #TYPE_COMPRA}). Cada ítem de la orden produce una fila.
      */
-    public void logPurchase(String transactionId, String playerUuid, String playerName,
-                            String itemId, String itemDisplayName, int quantity,
-                            String priceSummary, long timestampUtc, BlockPos shopPos, String shopWorld) {
+    public void logTransaction(String type, String transactionId, String playerUuid, String playerName,
+                               String itemId, String itemDisplayName, int quantity,
+                               String priceSummary, long timestampUtc, BlockPos shopPos, String shopWorld) {
         lock.lock();
         try {
             if (conn == null) return;
             try (PreparedStatement ps = conn.prepareStatement("""
                 INSERT INTO purchase_records
                     (transaction_id, player_uuid, player_name, item_id, item_display_name,
-                     quantity, price_summary, purchase_timestamp_utc, shop_x, shop_y, shop_z, shop_world)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                     quantity, price_summary, purchase_timestamp_utc, shop_x, shop_y, shop_z, shop_world,
+                     transaction_type)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """)) {
                 ps.setString(1,  transactionId);
                 ps.setString(2,  playerUuid);
@@ -140,10 +167,11 @@ public class PurchaseDatabase {
                 ps.setInt(10,    shopPos.getY());
                 ps.setInt(11,    shopPos.getZ());
                 ps.setString(12, shopWorld);
+                ps.setString(13, TYPE_COMPRA.equals(type) ? TYPE_COMPRA : TYPE_VENTA);
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
-            BetterAdminShop.LOGGER.error("[BetterAdminShop] Failed to log purchase", e);
+            BetterAdminShop.LOGGER.error("[BetterAdminShop] Failed to log transaction", e);
         } finally {
             lock.unlock();
         }
@@ -152,21 +180,24 @@ public class PurchaseDatabase {
     // ── Read ──────────────────────────────────────────────────────────────────
 
     private static final java.util.Set<String> ALLOWED_SORT_COLS = java.util.Set.of(
-            "player_name", "item_display_name", "quantity", "price_summary", "purchase_timestamp_utc"
+            "player_name", "item_display_name", "quantity", "price_summary",
+            "purchase_timestamp_utc", "transaction_type"
     );
 
     /**
-     * Returns one page of records with optional player-name filter and column sort.
+     * Returns one page of records with optional player-name / type filter and
+     * column sort.
      *
      * @param page         0-based page number
      * @param pageSize     rows per page
      * @param sortColumn   DB column name (validated against allow-list)
      * @param ascending    true = ASC
      * @param playerFilter substring filter on player_name (empty = all)
+     * @param typeFilter   "venta", "compra" or "" (todas)
      */
     public List<PurchaseRecord> getRecords(int page, int pageSize,
                                            String sortColumn, boolean ascending,
-                                           String playerFilter) {
+                                           String playerFilter, String typeFilter) {
         lock.lock();
         List<PurchaseRecord> results = new ArrayList<>();
         if (conn == null) return results;
@@ -175,19 +206,14 @@ public class PurchaseDatabase {
         if (!ALLOWED_SORT_COLS.contains(sortColumn)) sortColumn = "purchase_timestamp_utc";
         String order = ascending ? "ASC" : "DESC";
 
-        String sql = playerFilter.isBlank()
-                ? "SELECT * FROM purchase_records ORDER BY " + sortColumn + " " + order + " LIMIT ? OFFSET ?"
-                : "SELECT * FROM purchase_records WHERE LOWER(player_name) LIKE ? ORDER BY " + sortColumn + " " + order + " LIMIT ? OFFSET ?";
+        String where = buildWhere(playerFilter, typeFilter);
+        String sql = "SELECT * FROM purchase_records" + where
+                + " ORDER BY " + sortColumn + " " + order + " LIMIT ? OFFSET ?";
 
         try (PreparedStatement ps = conn.prepareStatement(sql)) {
-            if (!playerFilter.isBlank()) {
-                ps.setString(1, "%" + playerFilter.toLowerCase() + "%");
-                ps.setInt(2, pageSize);
-                ps.setInt(3, page * pageSize);
-            } else {
-                ps.setInt(1, pageSize);
-                ps.setInt(2, page * pageSize);
-            }
+            int idx = bindWhere(ps, 1, playerFilter, typeFilter);
+            ps.setInt(idx, pageSize);
+            ps.setInt(idx + 1, page * pageSize);
             ResultSet rs = ps.executeQuery();
             while (rs.next()) {
                 results.add(new PurchaseRecord(
@@ -199,7 +225,8 @@ public class PurchaseDatabase {
                         rs.getString("item_display_name"),
                         rs.getInt("quantity"),
                         rs.getString("price_summary"),
-                        rs.getLong("purchase_timestamp_utc")
+                        rs.getLong("purchase_timestamp_utc"),
+                        rs.getString("transaction_type")
                 ));
             }
         } catch (SQLException e) {
@@ -210,15 +237,13 @@ public class PurchaseDatabase {
         return results;
     }
 
-    public int getTotalCount(String playerFilter) {
+    public int getTotalCount(String playerFilter, String typeFilter) {
         lock.lock();
         try {
             if (conn == null) return 0;
-            String sql = playerFilter.isBlank()
-                    ? "SELECT COUNT(*) FROM purchase_records"
-                    : "SELECT COUNT(*) FROM purchase_records WHERE LOWER(player_name) LIKE ?";
+            String sql = "SELECT COUNT(*) FROM purchase_records" + buildWhere(playerFilter, typeFilter);
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                if (!playerFilter.isBlank()) ps.setString(1, "%" + playerFilter.toLowerCase() + "%");
+                bindWhere(ps, 1, playerFilter, typeFilter);
                 ResultSet rs = ps.executeQuery();
                 if (rs.next()) return rs.getInt(1);
             }
@@ -228,6 +253,22 @@ public class PurchaseDatabase {
             lock.unlock();
         }
         return 0;
+    }
+
+    private static String buildWhere(String playerFilter, String typeFilter) {
+        List<String> conds = new ArrayList<>();
+        if (!playerFilter.isBlank()) conds.add("LOWER(player_name) LIKE ?");
+        if (!typeFilter.isBlank()) conds.add("transaction_type = ?");
+        return conds.isEmpty() ? "" : " WHERE " + String.join(" AND ", conds);
+    }
+
+    /** Binds the WHERE params starting at {@code startIdx}; returns the next free index. */
+    private static int bindWhere(PreparedStatement ps, int startIdx,
+                                 String playerFilter, String typeFilter) throws SQLException {
+        int idx = startIdx;
+        if (!playerFilter.isBlank()) ps.setString(idx++, "%" + playerFilter.toLowerCase() + "%");
+        if (!typeFilter.isBlank()) ps.setString(idx++, typeFilter);
+        return idx;
     }
 
     public boolean isReady() {

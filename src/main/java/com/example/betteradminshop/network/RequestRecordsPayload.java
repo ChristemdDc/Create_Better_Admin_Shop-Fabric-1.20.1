@@ -16,7 +16,8 @@ public record RequestRecordsPayload(
         int     page,
         String  sortColumn,
         boolean ascending,
-        String  playerFilter
+        String  playerFilter,
+        String  typeFilter      // "venta", "compra" o "" (todas)
 ) implements CustomPacketPayload {
 
     public static final Type<RequestRecordsPayload> TYPE =
@@ -30,7 +31,8 @@ public record RequestRecordsPayload(
                     String  sort   = readStr(buf);
                     boolean asc    = buf.readBoolean();
                     String  filter = readStr(buf);
-                    return new RequestRecordsPayload(page, sort, asc, filter);
+                    String  type   = readStr(buf);
+                    return new RequestRecordsPayload(page, sort, asc, filter, type);
                 }
 
                 @Override
@@ -39,6 +41,7 @@ public record RequestRecordsPayload(
                     writeStr(buf, p.sortColumn());
                     buf.writeBoolean(p.ascending());
                     writeStr(buf, p.playerFilter());
+                    writeStr(buf, p.typeFilter());
                 }
 
                 private static String readStr(RegistryFriendlyByteBuf buf) {
@@ -60,8 +63,9 @@ public record RequestRecordsPayload(
 
     // ── Client-side send helper ───────────────────────────────────────────────
 
-    public static void sendToServer(int page, String sortColumn, boolean ascending, String filter) {
+    public static void sendToServer(int page, String sortColumn, boolean ascending,
+                                    String filter, String typeFilter) {
         net.neoforged.neoforge.network.PacketDistributor.sendToServer(
-                new RequestRecordsPayload(page, sortColumn, ascending, filter));
+                new RequestRecordsPayload(page, sortColumn, ascending, filter, typeFilter));
     }
 }

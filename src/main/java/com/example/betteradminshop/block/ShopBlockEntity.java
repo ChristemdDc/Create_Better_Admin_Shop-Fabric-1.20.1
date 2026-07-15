@@ -137,36 +137,43 @@ public class ShopBlockEntity extends BlockEntity {
         ShopOrder order = playerOrders.get(playerId);
         if (order == null || order.isEmpty()) return null;
 
-        Map<ItemStack, Integer> totalPrice = order.calculateTotalPrice(slots);
+        // Requisitos (lo que el jugador debe entregar) y recompensas (lo que
+        // recibe). Cada mapa ya combina slots de venta y de compra.
+        Map<ItemStack, Integer> required = order.computeRequired(slots);
+        Map<ItemStack, Integer> rewards  = order.computeRewards(slots);
 
-        for (Map.Entry<ItemStack, Integer> entry : totalPrice.entrySet()) {
-            ItemStack required = entry.getKey();
-            int needed = entry.getValue();
-            int found = countItemInInventory(player, required);
-            if (found < needed) {
-                return required.getHoverName().getString();
+        for (Map.Entry<ItemStack, Integer> entry : required.entrySet()) {
+            int found = countItemInInventory(player, entry.getKey());
+            if (found < entry.getValue()) {
+                return entry.getKey().getHoverName().getString();
             }
         }
 
-        for (Map.Entry<ItemStack, Integer> entry : totalPrice.entrySet()) {
+        for (Map.Entry<ItemStack, Integer> entry : required.entrySet()) {
             removeItemFromInventory(player, entry.getKey(), entry.getValue());
         }
 
-        List<ItemStack> purchasedItems = new ArrayList<>();
-        for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
-            int slotIdx = entry.getKey();
-            int qty = entry.getValue();
-            ShopSlot slot = slots[slotIdx];
-            if (!slot.isEmpty()) {
-                // Keep exact count — no splitting by maxStackSize
-                ItemStack stack = slot.getDisplayItem().copy();
-                stack.setCount(qty);
-                purchasedItems.add(stack);
-                slot.reduceStock(qty);
+        // Empaquetar las recompensas (divididas por maxStackSize: el codec de
+        // ItemStack en 1.20.5+ solo admite counts 1..99, un stack mayor rompe
+        // el guardado NBT del block entity y la tienda queda vacía).
+        List<ItemStack> deliveredItems = new ArrayList<>();
+        for (Map.Entry<ItemStack, Integer> entry : rewards.entrySet()) {
+            int remaining = entry.getValue();
+            int stackSize = Math.max(1, Math.min(entry.getKey().getMaxStackSize(), 99));
+            while (remaining > 0) {
+                int count = Math.min(remaining, stackSize);
+                deliveredItems.add(entry.getKey().copyWithCount(count));
+                remaining -= count;
             }
         }
 
-        DeliveryEntry newEntry = new DeliveryEntry(purchasedItems, player.getUUID(),
+        // Reducir stock de cada slot involucrado
+        for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
+            ShopSlot slot = slots[entry.getKey()];
+            if (!slot.isEmpty()) slot.reduceStock(entry.getValue());
+        }
+
+        DeliveryEntry newEntry = new DeliveryEntry(deliveredItems, player.getUUID(),
                 System.currentTimeMillis(), player.getName().getString());
         // Start protection immediately if this will be the first (and only) entry
         if (deliveryQueue.isEmpty()) {
@@ -174,20 +181,26 @@ public class ShopBlockEntity extends BlockEntity {
         }
         deliveryQueue.addLast(newEntry);
 
-        // ── Log to SQLite database ──────────────────────────────────────────
-        String priceSummary = buildPriceSummary(totalPrice);
+        // ── Log to SQLite database (una fila por slot, con su tipo) ─────────
         String transactionId = java.util.UUID.randomUUID().toString();
         long now = System.currentTimeMillis();
         String worldKey = (level != null) ? level.dimension().location().toString() : "unknown";
-        for (ItemStack stack : purchasedItems) {
-            PurchaseDatabase.getInstance().logPurchase(
+        for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
+            ShopSlot slot = slots[entry.getKey()];
+            if (slot.isEmpty()) continue;
+            int bundles = entry.getValue();
+            int totalUnits = bundles * slot.getSellAmount();
+            ItemStack item = slot.getDisplayItem();
+            String type = slot.isCompra() ? PurchaseDatabase.TYPE_COMPRA : PurchaseDatabase.TYPE_VENTA;
+            PurchaseDatabase.getInstance().logTransaction(
+                    type,
                     transactionId,
                     player.getUUID().toString(),
                     player.getName().getString(),
-                    BuiltInRegistries.ITEM.getKey(stack.getItem()).toString(),
-                    stack.getHoverName().getString(),
-                    stack.getCount(),
-                    priceSummary,
+                    BuiltInRegistries.ITEM.getKey(item.getItem()).toString(),
+                    item.getHoverName().getString(),
+                    totalUnits,
+                    buildSlotPriceSummary(slot, bundles),
                     now,
                     worldPosition,
                     worldKey);
@@ -200,11 +213,17 @@ public class ShopBlockEntity extends BlockEntity {
         return null;
     }
 
-    private static String buildPriceSummary(Map<ItemStack, Integer> totalPrice) {
+    /** Resumen de precio/pago de un slot para la fila del registro. */
+    private static String buildSlotPriceSummary(ShopSlot slot, int bundles) {
         StringBuilder sb = new StringBuilder();
-        for (Map.Entry<ItemStack, Integer> entry : totalPrice.entrySet()) {
+        if (!slot.getPriceItem().isEmpty()) {
+            sb.append(slot.getPriceAmount() * bundles).append("× ")
+              .append(slot.getPriceItem().getHoverName().getString());
+        }
+        if (slot.hasSecondPrice()) {
             if (sb.length() > 0) sb.append(", ");
-            sb.append(entry.getValue()).append("× ").append(entry.getKey().getHoverName().getString());
+            sb.append(slot.getPriceAmount2() * bundles).append("× ")
+              .append(slot.getPriceItem2().getHoverName().getString());
         }
         return sb.toString();
     }
@@ -372,32 +391,33 @@ public class ShopBlockEntity extends BlockEntity {
         return Math.sqrt(px * px + py * py + pz * pz);
     }
 
-    public void setSlotItem(int index, ItemStack item) {
-        if (index >= 0 && index < TOTAL_SLOTS) {
-            slots[index].setDisplayItem(item);
-            setChanged();
-            syncToClient();
+    /**
+     * Aplica la configuración completa de un slot en una sola operación
+     * (proveniente del panel de administración).
+     *
+     * El stock actual solo se resetea cuando cambia el máximo — antes, cada
+     * "Aplicar" reponía el stock silenciosamente.
+     */
+    public void applySlotConfig(int index, ShopSlot.Type type, ItemStack saleItem, ItemStack renderOverride,
+                                int sellAmount, ItemStack priceItem, int priceAmount,
+                                ItemStack priceItem2, int priceAmount2, int maxStock) {
+        if (index < 0 || index >= TOTAL_SLOTS) return;
+        ShopSlot slot = slots[index];
+        slot.setType(type);
+        slot.setDisplayItem(saleItem);
+        slot.setRenderOverride(renderOverride);
+        slot.setSellAmount(sellAmount);
+        slot.setPriceItem(priceItem);
+        slot.setPriceAmount(priceAmount);
+        slot.setPriceItem2(priceItem2);
+        slot.setPriceAmount2(priceAmount2);
+        boolean stockChanged = slot.getMaxStock() != maxStock;
+        slot.setMaxStock(maxStock);
+        if (stockChanged && maxStock != ShopSlot.INFINITE_STOCK) {
+            slot.setCurrentStock(maxStock);
         }
-    }
-
-    public void setSlotPrice(int index, ItemStack priceItem, int priceAmount) {
-        if (index >= 0 && index < TOTAL_SLOTS) {
-            slots[index].setPriceItem(priceItem);
-            slots[index].setPriceAmount(priceAmount);
-            setChanged();
-            syncToClient();
-        }
-    }
-
-    public void setSlotMaxStock(int index, int maxStock) {
-        if (index >= 0 && index < TOTAL_SLOTS) {
-            slots[index].setMaxStock(maxStock);
-            if (maxStock != ShopSlot.INFINITE_STOCK) {
-                slots[index].setCurrentStock(maxStock);
-            }
-            setChanged();
-            syncToClient();
-        }
+        setChanged();
+        syncToClient();
     }
 
     public void restockSlot(int index) {
@@ -438,10 +458,18 @@ public class ShopBlockEntity extends BlockEntity {
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
 
+        // Carga defensiva: una entrada corrupta no debe descartar el resto de
+        // la tienda (era una de las causas de "la tienda se resetea").
         if (tag.contains("Slots")) {
             ListTag slotList = tag.getList("Slots", Tag.TAG_COMPOUND);
             for (int i = 0; i < Math.min(slotList.size(), TOTAL_SLOTS); i++) {
-                slots[i].load(registries, slotList.getCompound(i));
+                try {
+                    slots[i].load(registries, slotList.getCompound(i));
+                } catch (Exception e) {
+                    com.example.betteradminshop.BetterAdminShop.LOGGER
+                            .error("[BetterAdminShop] Slot {} corrupto en {}, se omite", i, worldPosition, e);
+                    slots[i].clear();
+                }
             }
         }
 
@@ -449,7 +477,12 @@ public class ShopBlockEntity extends BlockEntity {
         if (tag.contains("DeliveryQueue")) {
             ListTag queueTag = tag.getList("DeliveryQueue", Tag.TAG_COMPOUND);
             for (int i = 0; i < queueTag.size(); i++) {
-                deliveryQueue.addLast(DeliveryEntry.load(queueTag.getCompound(i), registries));
+                try {
+                    deliveryQueue.addLast(DeliveryEntry.load(queueTag.getCompound(i), registries));
+                } catch (Exception e) {
+                    com.example.betteradminshop.BetterAdminShop.LOGGER
+                            .error("[BetterAdminShop] Entrega corrupta en {}, se omite", worldPosition, e);
+                }
             }
         }
     }
