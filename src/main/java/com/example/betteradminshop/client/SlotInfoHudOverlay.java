@@ -77,22 +77,25 @@ public class SlotInfoHudOverlay implements LayeredDraw.Layer {
         ShopSlot slot = be.getSlot(slotIdx);
         if (slot == null || slot.isEmpty()) return;
 
-        drawPanel(mc, gui, slot);
+        drawPanel(mc, gui, slot, mc.player.getUUID());
     }
 
     // ── Panel ─────────────────────────────────────────────────────────────────
 
-    private void drawPanel(Minecraft mc, GuiGraphics g, ShopSlot slot) {
+    private void drawPanel(Minecraft mc, GuiGraphics g, ShopSlot slot, java.util.UUID playerId) {
         Font font = mc.font;
+        long now = System.currentTimeMillis();
 
         boolean twoPrices = slot.hasSecondPrice();
         boolean compra = slot.isCompra();
         int typeColor = compra ? COL_COMPRA : COL_VENTA;
 
+        boolean showTimer = !slot.hasInfiniteStock() && slot.hasActiveTimer(playerId, now);
+
         // Alturas de secciones
         int headerH = PAD + ICON + PAD + LINE_H; // + línea de tipo
         int priceH  = PAD + LINE_H + (ICON + 2) + (twoPrices ? ICON + 2 : 0) + PAD / 2;
-        int stockH  = PAD / 2 + LINE_H + PAD;
+        int stockH  = PAD / 2 + LINE_H + (showTimer ? LINE_H : 0) + PAD;
         int totalH  = headerH + 1 + priceH + 1 + stockH;
 
         int px = mc.getWindow().getGuiScaledWidth() - W - 8;
@@ -146,23 +149,32 @@ public class SlotInfoHudOverlay implements LayeredDraw.Layer {
         g.fill(px + 2, cy, px + W, cy + 1, COL_SEP);
         cy += 1 + PAD / 2;
 
-        // ── Stock / cupo de compra ────────────────────────────────────────────
-        String stockLabel = compra ? "Cupo: " : "Stock: ";
+        // ── Stock / cupo de compra (por jugador) ──────────────────────────────
+        String stockLabel = compra ? "Tu cupo: " : "Tu stock: ";
         int labelW = font.width(stockLabel);
         g.drawString(font, stockLabel, contentX, cy, COL_LABEL, false);
+        int remaining = slot.getRemaining(playerId, now);
         String stockStr;
         int stockColor;
         if (slot.hasInfiniteStock()) {
             stockStr = compra ? "∞ Ilimitado" : "∞ Infinito";
             stockColor = COL_STOCK_OK;
-        } else if (slot.isOutOfStock()) {
+        } else if (remaining < slot.getSellAmount()) {
             stockStr = compra ? "✖ Cupo lleno" : "✖ Agotado";
             stockColor = COL_STOCK_OUT;
         } else {
-            stockStr = slot.getCurrentStock() + " / " + slot.getMaxStock();
-            stockColor = slot.getCurrentStock() <= slot.getSellAmount() * 3 ? COL_STOCK_LOW : COL_STOCK_OK;
+            stockStr = remaining + " / " + slot.getMaxStock();
+            stockColor = remaining <= slot.getSellAmount() * 3 ? COL_STOCK_LOW : COL_STOCK_OK;
         }
         g.drawString(font, stockStr, contentX + labelW, cy, stockColor, false);
+
+        // ── Temporizador de reabastecimiento (24h) ────────────────────────────
+        if (showTimer) {
+            cy += LINE_H;
+            long secs = slot.getResetRemainingSeconds(playerId, now);
+            String timer = "⏱ Reabastece en " + com.example.betteradminshop.block.ShopBlock.formatDuration(secs);
+            g.drawString(font, timer, contentX, cy, COL_STOCK_LOW, false);
+        }
     }
 
     private int drawPriceLine(GuiGraphics g, Font font, int x, int cy, ItemStack priceItem, int amount) {

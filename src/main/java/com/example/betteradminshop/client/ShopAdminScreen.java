@@ -3,6 +3,7 @@ package com.example.betteradminshop.client;
 import com.example.betteradminshop.block.ShopBlockEntity;
 import com.example.betteradminshop.block.ShopSlot;
 import com.example.betteradminshop.network.ModNetworking;
+import com.example.betteradminshop.network.RequestDynamicItemsPayload;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -128,12 +129,7 @@ public class ShopAdminScreen extends Screen {
         leftX = (width - GUI_WIDTH) / 2;
         topY = (height - GUI_HEIGHT) / 2;
 
-        allItems.clear();
-        for (Item item : BuiltInRegistries.ITEM) {
-            if (item != Items.AIR) {
-                allItems.add(new ItemStack(item));
-            }
-        }
+        rebuildAllItems();
         filteredItems.clear();
         filteredItems.addAll(allItems);
 
@@ -144,10 +140,43 @@ public class ShopAdminScreen extends Screen {
         initSlotGrid();
         initPickerSearch();
 
+        // Pedir al servidor la lista actual de ítems dinámicos (los creados en
+        // juego por otros mods). La respuesta llega por DynamicItemsPayload y
+        // dispara refreshItemList().
+        RequestDynamicItemsPayload.sendToServer();
+
         // Mantener la selección al redimensionar
         if (selectedSlot >= 0) {
             loadConfigFromSlot(selectedSlot);
         }
+    }
+
+    /** Reconstruye la lista del selector: ítems del registro + dinámicos. */
+    private void rebuildAllItems() {
+        allItems.clear();
+        for (Item item : BuiltInRegistries.ITEM) {
+            if (item != Items.AIR) {
+                allItems.add(new ItemStack(item));
+            }
+        }
+        // Ítems dinámicos (creados en juego por otros mods), sincronizados desde
+        // el servidor. Se muestran primero para que sean fáciles de encontrar.
+        List<ItemStack> dynamic = ClientDynamicItems.get();
+        if (!dynamic.isEmpty()) {
+            List<ItemStack> merged = new ArrayList<>(dynamic.size() + allItems.size());
+            for (ItemStack s : dynamic) {
+                if (!s.isEmpty()) merged.add(s.copyWithCount(1));
+            }
+            merged.addAll(allItems);
+            allItems.clear();
+            allItems.addAll(merged);
+        }
+    }
+
+    /** Llamado cuando llega la lista de ítems dinámicos desde el servidor. */
+    public void refreshItemList() {
+        rebuildAllItems();
+        filterItems(pickerSearchField != null ? pickerSearchField.getValue() : "");
     }
 
     // ── Layout del panel derecho ──────────────────────────────────────────────
@@ -348,8 +377,8 @@ public class ShopAdminScreen extends Screen {
         if (slot.hasInfiniteStock()) {
             lines.add(Component.literal("§7" + (compra ? "Cupo: §a∞" : "Stock: §a∞")));
         } else {
-            lines.add(Component.literal("§7" + (compra ? "Cupo: " : "Stock: ") + (slot.isOutOfStock() ? "§c" : "§a")
-                    + slot.getCurrentStock() + "/" + slot.getMaxStock()));
+            lines.add(Component.literal("§7" + (compra ? "Cupo: §a" : "Stock: §a")
+                    + slot.getMaxStock() + " §7por jugador §8(24h)"));
         }
         if (slot.hasRenderOverride()) {
             lines.add(Component.literal("§8Se muestra como: "
@@ -392,9 +421,6 @@ public class ShopAdminScreen extends Screen {
             // Punto indicador de tipo (esquina superior izquierda)
             int dot = slot.isCompra() ? COL_COMPRA : COL_VENTA;
             g.fill(sw.x + 2, sw.y + 2, sw.x + 5, sw.y + 5, dot);
-            if (slot.isOutOfStock()) {
-                g.fill(sw.x + 2, sw.y + 2, sw.x + sw.size - 2, sw.y + sw.size - 2, 0x66FF0000);
-            }
         } else {
             g.drawCenteredString(font, "+", sw.x + sw.size / 2, sw.y + sw.size / 2 - 4, COL_TEXT_DIM);
         }
@@ -527,21 +553,18 @@ public class ShopAdminScreen extends Screen {
         sellAmountField.draw(g, font);
         g.drawString(font, compra ? "u. que pide" : "u. por compra", cfgLeftX + 50, lRow(2) + 13, COL_TEXT_DIM);
 
-        // Stock / cupo
-        drawColLabel(g, cfgLeftX, lRow(3), compra ? "Cupo máx:" : "Stock máx:");
+        // Stock / cupo (por jugador, reabastece cada 24h)
+        drawColLabel(g, cfgLeftX, lRow(3), compra ? "Cupo/jugador:" : "Stock/jugador:");
         stockField.draw(g, font);
-        ShopSlot slot = shopBE.getSlot(selectedSlot);
+        int maxStockVal = parseInt(stockField.getValue(), ShopSlot.INFINITE_STOCK);
         String stockInfo;
         int stockColor;
-        if (slot == null || slot.isEmpty()) {
-            stockInfo = "-1 = ilimitado";
-            stockColor = COL_TEXT_DIM;
-        } else if (slot.hasInfiniteStock()) {
+        if (maxStockVal < 0) {
             stockInfo = compra ? "∞ ilimitado" : "∞ infinito";
             stockColor = COL_GREEN;
         } else {
-            stockInfo = "actual: " + slot.getCurrentStock() + "/" + slot.getMaxStock();
-            stockColor = slot.isOutOfStock() ? COL_RED : COL_GREEN;
+            stockInfo = "por jugador · 24h";
+            stockColor = COL_TEXT_DIM;
         }
         g.drawString(font, stockInfo, cfgLeftX + 50, lRow(3) + 13, stockColor);
 

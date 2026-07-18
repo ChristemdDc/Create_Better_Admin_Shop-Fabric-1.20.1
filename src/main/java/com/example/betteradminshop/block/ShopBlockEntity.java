@@ -12,6 +12,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import com.example.betteradminshop.data.MongoStore;
 import com.example.betteradminshop.data.PurchaseDatabase;
 
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -40,6 +41,10 @@ public class ShopBlockEntity extends BlockEntity {
     private final ShopSlot[] slots = new ShopSlot[TOTAL_SLOTS];
     private final Deque<DeliveryEntry> deliveryQueue = new ArrayDeque<>();
     private final Map<UUID, ShopOrder> playerOrders = new HashMap<>();
+
+    /** Tiendas cargadas del lado servidor (para republicar el estado en Mongo). */
+    private static final java.util.Set<ShopBlockEntity> LOADED =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     // Render positions for group 1 (elements 37-48)
     public static final float[][] GROUP1_POSITIONS = {
@@ -121,12 +126,13 @@ public class ShopBlockEntity extends BlockEntity {
     public boolean addToOrder(UUID playerId, int slotIndex) {
         if (slotIndex < 0 || slotIndex >= TOTAL_SLOTS) return false;
         ShopSlot slot = slots[slotIndex];
-        if (slot.isEmpty() || slot.isOutOfStock()) return false;
+        long now = System.currentTimeMillis();
+        if (slot.isEmpty() || slot.isOutOfStockFor(playerId, now)) return false;
 
         ShopOrder order = getOrCreateOrder(playerId);
         int currentInOrder = order.getQuantity(slotIndex);
 
-        if (!slot.canPurchase(currentInOrder + 1)) return false;
+        if (!slot.canPurchase(playerId, currentInOrder + 1, now)) return false;
 
         order.addItem(slotIndex);
         return true;
@@ -167,10 +173,11 @@ public class ShopBlockEntity extends BlockEntity {
             }
         }
 
-        // Reducir stock de cada slot involucrado
+        // Descontar stock de cada slot para ESTE jugador (por jugador)
+        long nowStock = System.currentTimeMillis();
         for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
             ShopSlot slot = slots[entry.getKey()];
-            if (!slot.isEmpty()) slot.reduceStock(entry.getValue());
+            if (!slot.isEmpty()) slot.consume(playerId, entry.getValue(), nowStock);
         }
 
         DeliveryEntry newEntry = new DeliveryEntry(deliveredItems, player.getUUID(),
@@ -181,36 +188,94 @@ public class ShopBlockEntity extends BlockEntity {
         }
         deliveryQueue.addLast(newEntry);
 
-        // ── Log to SQLite database (una fila por slot, con su tipo) ─────────
+        // ── Log a SQLite (autoritativa) + espejo a MongoDB (opcional) ───────
         String transactionId = java.util.UUID.randomUUID().toString();
         long now = System.currentTimeMillis();
         String worldKey = (level != null) ? level.dimension().location().toString() : "unknown";
         for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
-            ShopSlot slot = slots[entry.getKey()];
+            int slotIndex = entry.getKey();
+            ShopSlot slot = slots[slotIndex];
             if (slot.isEmpty()) continue;
             int bundles = entry.getValue();
             int totalUnits = bundles * slot.getSellAmount();
             ItemStack item = slot.getDisplayItem();
             String type = slot.isCompra() ? PurchaseDatabase.TYPE_COMPRA : PurchaseDatabase.TYPE_VENTA;
+            String itemId = BuiltInRegistries.ITEM.getKey(item.getItem()).toString();
+            String itemName = item.getHoverName().getString();
+            String priceSummary = buildSlotPriceSummary(slot, bundles);
+
             PurchaseDatabase.getInstance().logTransaction(
-                    type,
-                    transactionId,
-                    player.getUUID().toString(),
-                    player.getName().getString(),
-                    BuiltInRegistries.ITEM.getKey(item.getItem()).toString(),
-                    item.getHoverName().getString(),
-                    totalUnits,
-                    buildSlotPriceSummary(slot, bundles),
-                    now,
-                    worldPosition,
-                    worldKey);
+                    type, transactionId, player.getUUID().toString(), player.getName().getString(),
+                    itemId, itemName, totalUnits, priceSummary, now, worldPosition, worldKey);
+
+            MongoStore.getInstance().logTransaction(
+                    type, transactionId, slotIndex,
+                    player.getUUID().toString(), player.getName().getString(),
+                    itemId, itemName, totalUnits,
+                    buildPriceLines(slot, bundles), priceSummary, now, worldKey, worldPosition);
         }
 
         clearOrder(playerId);
         setChanged();
         syncToClient();
+        publishState(); // stock cambió → publica el estado a Mongo
 
         return null;
+    }
+
+    /** Desglose de precio/pago de un slot como líneas estructuradas (para Mongo). */
+    private static List<MongoStore.PriceLine> buildPriceLines(ShopSlot slot, int bundles) {
+        List<MongoStore.PriceLine> lines = new ArrayList<>();
+        if (!slot.getPriceItem().isEmpty()) {
+            lines.add(new MongoStore.PriceLine(
+                    BuiltInRegistries.ITEM.getKey(slot.getPriceItem().getItem()).toString(),
+                    slot.getPriceItem().getHoverName().getString(),
+                    slot.getPriceAmount() * bundles));
+        }
+        if (slot.hasSecondPrice()) {
+            lines.add(new MongoStore.PriceLine(
+                    BuiltInRegistries.ITEM.getKey(slot.getPriceItem2().getItem()).toString(),
+                    slot.getPriceItem2().getHoverName().getString(),
+                    slot.getPriceAmount2() * bundles));
+        }
+        return lines;
+    }
+
+    /** Publica el estado de esta tienda a MongoDB (si está habilitado). */
+    public void publishState() {
+        if (level == null || level.isClientSide) return;
+        String world = level.dimension().location().toString();
+        MongoStore.getInstance().publishShop(world, worldPosition, slots);
+    }
+
+    // ── Registro de tiendas cargadas (server) ──────────────────────────────────
+
+    @Override
+    public void clearRemoved() {
+        super.clearRemoved();
+        if (level != null && !level.isClientSide) {
+            LOADED.add(this);
+        }
+    }
+
+    @Override
+    public void setRemoved() {
+        super.setRemoved();
+        LOADED.remove(this);
+    }
+
+    /** Publica en Mongo el estado de todas las tiendas cargadas. Devuelve cuántas. */
+    public static int republishAllLoaded() {
+        int n = 0;
+        for (ShopBlockEntity be : LOADED) {
+            be.publishState();
+            n++;
+        }
+        return n;
+    }
+
+    public static int loadedShopCount() {
+        return LOADED.size();
     }
 
     /** Resumen de precio/pago de un slot para la fila del registro. */
@@ -411,13 +476,14 @@ public class ShopBlockEntity extends BlockEntity {
         slot.setPriceAmount(priceAmount);
         slot.setPriceItem2(priceItem2);
         slot.setPriceAmount2(priceAmount2);
-        boolean stockChanged = slot.getMaxStock() != maxStock;
-        slot.setMaxStock(maxStock);
-        if (stockChanged && maxStock != ShopSlot.INFINITE_STOCK) {
-            slot.setCurrentStock(maxStock);
+        // Cambiar el límite reinicia el consumo por jugador; si no cambia, se
+        // conserva el progreso de cada jugador.
+        if (slot.getMaxStock() != maxStock) {
+            slot.setMaxStock(maxStock);
         }
         setChanged();
         syncToClient();
+        publishState();
     }
 
     public void restockSlot(int index) {
@@ -425,6 +491,7 @@ public class ShopBlockEntity extends BlockEntity {
             slots[index].restock();
             setChanged();
             syncToClient();
+            publishState();
         }
     }
 
@@ -433,6 +500,7 @@ public class ShopBlockEntity extends BlockEntity {
             slots[index].clear();
             setChanged();
             syncToClient();
+            publishState();
         }
     }
 

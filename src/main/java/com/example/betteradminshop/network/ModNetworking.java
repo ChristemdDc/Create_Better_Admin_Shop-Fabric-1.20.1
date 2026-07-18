@@ -114,7 +114,16 @@ public final class ModNetworking {
 
         // Records panel
         r.playToServer(RequestRecordsPayload.TYPE, RequestRecordsPayload.STREAM_CODEC, ModNetworking::handleRequestRecords);
-        r.playToClient(RecordsDataPayload.TYPE,    RecordsDataPayload.STREAM_CODEC,    ModNetworking::handleRecordsData);
+        // Client-only handler: reference it through a deferring lambda so the
+        // client class (and Screen) is never classloaded on a dedicated server.
+        r.playToClient(RecordsDataPayload.TYPE,    RecordsDataPayload.STREAM_CODEC,
+                (msg, ctx) -> com.example.betteradminshop.client.ClientPayloadHandler.handleRecordsData(msg, ctx));
+
+        // Ítems dinámicos auxiliares
+        r.playToServer(RequestDynamicItemsPayload.TYPE, RequestDynamicItemsPayload.STREAM_CODEC,
+                ModNetworking::handleRequestDynamicItems);
+        r.playToClient(DynamicItemsPayload.TYPE, DynamicItemsPayload.STREAM_CODEC,
+                (msg, ctx) -> com.example.betteradminshop.client.ClientPayloadHandler.handleDynamicItems(msg, ctx));
     }
 
     // -------- Server-side handlers (run on main thread) --------------------
@@ -154,18 +163,16 @@ public final class ModNetworking {
                 player, msg.page(), msg.playerFilter(), msg.sortColumn(), msg.ascending(), msg.typeFilter()));
     }
 
-    /** Runs client-side — opens or refreshes the AdminRecordsScreen. */
-    @SuppressWarnings("deprecation")
-    private static void handleRecordsData(RecordsDataPayload msg, IPayloadContext ctx) {
-        ctx.enqueueWork(() -> {
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            if (mc == null) return;
-            if (mc.screen instanceof com.example.betteradminshop.client.AdminRecordsScreen existing) {
-                existing.updateData(msg);
-            } else {
-                mc.setScreen(new com.example.betteradminshop.client.AdminRecordsScreen(msg));
-            }
-        });
+    // Client-side handling of RecordsDataPayload lives in
+    // com.example.betteradminshop.client.ClientPayloadHandler so this class
+    // (loaded on the dedicated server) never references client-only types.
+
+    // ---- Ítems dinámicos (server side) ------------------------------------
+
+    private static void handleRequestDynamicItems(RequestDynamicItemsPayload msg, IPayloadContext ctx) {
+        ServerPlayer player = asServer(ctx);
+        if (player == null || !player.hasPermissions(4)) return;
+        ctx.enqueueWork(() -> AdminShopCommand.syncDynamicItemsTo(player));
     }
 
     // -------- Helpers -------------------------------------------------------

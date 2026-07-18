@@ -85,6 +85,14 @@ dependencies {
 
     // SQLite JDBC – bundled inside the mod jar via JarJar
     jarJar(implementation("org.xerial:sqlite-jdbc:3.49.1.0"))
+
+    // MongoDB sync driver (opcional, para registros externos / precios IA).
+    // Bundled via JarJar. transitive=false: solo embebemos bson + core + sync;
+    // las dependencias opcionales (snappy/zstd/jnr/mongocrypt) no hacen falta
+    // para una conexión TCP básica sin compresión ni CSFLE.
+    jarJar(implementation("org.mongodb:bson:5.2.1") { transitive = false })
+    jarJar(implementation("org.mongodb:mongodb-driver-core:5.2.1") { transitive = false })
+    jarJar(implementation("org.mongodb:mongodb-driver-sync:5.2.1") { transitive = false })
 }
 
 tasks.withType(JavaCompile).configureEach {

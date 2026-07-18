@@ -133,7 +133,9 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         itemRenderer.renderStatic(displayItem, ItemDisplayContext.FIXED, packedLight,
                 OverlayTexture.NO_OVERLAY, poseStack, bufferSource, null, 0);
 
-        if (slot.isOutOfStock()) {
+        // Agotado según el stock del jugador local (por jugador)
+        java.util.UUID localId = localPlayerId();
+        if (localId != null && slot.isOutOfStockFor(localId, System.currentTimeMillis())) {
             poseStack.pushPose();
             poseStack.translate(0, 0, -0.01f);
             renderOutOfStockOverlay(poseStack, bufferSource, packedLight);
@@ -141,6 +143,10 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         }
 
         poseStack.popPose();
+    }
+
+    private static java.util.UUID localPlayerId() {
+        return Minecraft.getInstance().player != null ? Minecraft.getInstance().player.getUUID() : null;
     }
 
     private void renderSelectionBox(PoseStack poseStack, MultiBufferSource bufferSource, float[] pos) {

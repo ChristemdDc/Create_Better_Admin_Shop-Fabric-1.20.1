@@ -2,10 +2,21 @@ package com.example.betteradminshop.block;
 
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.world.item.ItemStack;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 
 public class ShopSlot {
     public static final int INFINITE_STOCK = -1;
+
+    /** Tiempo de reabastecimiento por jugador: 24 horas. */
+    public static final long STOCK_RESET_MS = 24L * 60L * 60L * 1000L;
 
     /**
      * Tipo de slot.
@@ -29,9 +40,16 @@ public class ShopSlot {
     /** Segundo ítem de precio (opcional). EMPTY = solo se cobra priceItem. */
     private ItemStack priceItem2 = ItemStack.EMPTY;
     private int priceAmount2 = 1;
-    /** Stock en unidades de saleItem (no en compras). */
+    /**
+     * Stock máximo POR JUGADOR (en unidades de saleItem). -1 = infinito.
+     * Cada jugador tiene su propio consumo; al agotarlo arranca un temporizador
+     * de 24h tras el cual su stock se restablece (solo el suyo).
+     */
     private int maxStock = INFINITE_STOCK;
-    private int currentStock = INFINITE_STOCK;
+    /** Unidades consumidas por cada jugador en el ciclo actual. */
+    private final Map<UUID, Integer> consumed = new HashMap<>();
+    /** Instante (ms) en que el stock de cada jugador vuelve a llenarse. */
+    private final Map<UUID, Long> resetAt = new HashMap<>();
 
     public ShopSlot() {}
 
@@ -39,31 +57,86 @@ public class ShopSlot {
         return saleItem.isEmpty();
     }
 
-    public boolean isOutOfStock() {
-        return maxStock != INFINITE_STOCK && currentStock < sellAmount;
-    }
-
     public boolean hasInfiniteStock() {
         return maxStock == INFINITE_STOCK;
     }
 
-    /** @param bundles número de compras (cada una entrega {@link #sellAmount} unidades). */
-    public boolean canPurchase(int bundles) {
-        if (isEmpty()) return false;
-        if (hasInfiniteStock()) return true;
-        return currentStock >= bundles * sellAmount;
+    /**
+     * Unidades que le quedan a {@code player} en este momento. Si su
+     * temporizador de 24h ya venció, se considera stock lleno.
+     */
+    public int getRemaining(UUID player, long now) {
+        if (hasInfiniteStock()) return Integer.MAX_VALUE;
+        Long reset = resetAt.get(player);
+        if (reset != null && now >= reset) return maxStock; // ciclo terminado
+        return Math.max(0, maxStock - consumed.getOrDefault(player, 0));
     }
 
-    /** @param bundles número de compras a descontar del stock. */
-    public void reduceStock(int bundles) {
-        if (!hasInfiniteStock()) {
-            currentStock = Math.max(0, currentStock - bundles * sellAmount);
+    public boolean isOutOfStockFor(UUID player, long now) {
+        if (hasInfiniteStock()) return false;
+        return getRemaining(player, now) < sellAmount;
+    }
+
+    /** @param bundles número de compras (cada una entrega {@link #sellAmount} unidades). */
+    public boolean canPurchase(UUID player, int bundles, long now) {
+        if (isEmpty()) return false;
+        if (hasInfiniteStock()) return true;
+        return getRemaining(player, now) >= bundles * sellAmount;
+    }
+
+    /**
+     * Descuenta stock del jugador (servidor). Si venció su temporizador, primero
+     * reinicia; si agota su cupo, arranca el temporizador de 24h.
+     */
+    public void consume(UUID player, int bundles, long now) {
+        if (hasInfiniteStock()) return;
+        maybeReset(player, now);
+        int used = consumed.getOrDefault(player, 0) + bundles * sellAmount;
+        consumed.put(player, used);
+        if (used >= maxStock) {
+            resetAt.put(player, now + STOCK_RESET_MS);
         }
     }
 
+    private void maybeReset(UUID player, long now) {
+        Long reset = resetAt.get(player);
+        if (reset != null && now >= reset) {
+            consumed.remove(player);
+            resetAt.remove(player);
+        }
+    }
+
+    /**
+     * Segundos que faltan para reabastecer al jugador (0 si no está agotado o
+     * si el temporizador ya venció).
+     */
+    public long getResetRemainingSeconds(UUID player, long now) {
+        Long reset = resetAt.get(player);
+        if (reset == null || now >= reset) return 0;
+        return (reset - now) / 1000L;
+    }
+
+    /** ¿Este jugador tiene un temporizador de reabastecimiento activo? */
+    public boolean hasActiveTimer(UUID player, long now) {
+        Long reset = resetAt.get(player);
+        return reset != null && now < reset;
+    }
+
+    /** Reinicia el stock de TODOS los jugadores (botón Restock del admin). */
     public void restock() {
-        if (!hasInfiniteStock()) {
-            currentStock = maxStock;
+        consumed.clear();
+        resetAt.clear();
+    }
+
+    /** Elimina entradas de jugadores cuyo ciclo de 24h ya venció (limpieza). */
+    public void pruneExpired(long now) {
+        Set<UUID> toRemove = new HashSet<>();
+        for (Map.Entry<UUID, Long> e : resetAt.entrySet()) {
+            if (now >= e.getValue()) toRemove.add(e.getKey());
+        }
+        for (UUID id : toRemove) {
+            consumed.remove(id);
+            resetAt.remove(id);
         }
     }
 
@@ -97,12 +170,10 @@ public class ShopSlot {
     public int getMaxStock() { return maxStock; }
     public void setMaxStock(int max) {
         this.maxStock = max;
-        if (max != INFINITE_STOCK && currentStock == INFINITE_STOCK) {
-            currentStock = max;
-        }
+        // Cambiar el límite reinicia el consumo de todos los jugadores.
+        consumed.clear();
+        resetAt.clear();
     }
-    public int getCurrentStock() { return currentStock; }
-    public void setCurrentStock(int stock) { this.currentStock = stock; }
 
     /**
      * In 1.20.5+ ItemStack serialization changed: it now requires a
@@ -110,6 +181,8 @@ public class ShopSlot {
      * The previous {@code ItemStack.save(CompoundTag)} signature is gone.
      */
     public CompoundTag save(HolderLookup.Provider provider) {
+        // Limpieza: descarta ciclos de 24h ya vencidos antes de serializar.
+        pruneExpired(System.currentTimeMillis());
         CompoundTag tag = new CompoundTag();
         tag.putString("Type", type.name());
         if (!saleItem.isEmpty()) {
@@ -128,7 +201,24 @@ public class ShopSlot {
         }
         tag.putInt("PriceAmount2", priceAmount2);
         tag.putInt("MaxStock", maxStock);
-        tag.putInt("CurrentStock", currentStock);
+
+        // Consumo por jugador (solo entradas relevantes; se descartan las que
+        // no tienen consumo ni temporizador).
+        ListTag stockList = new ListTag();
+        Set<UUID> players = new HashSet<>();
+        players.addAll(consumed.keySet());
+        players.addAll(resetAt.keySet());
+        for (UUID id : players) {
+            int used = consumed.getOrDefault(id, 0);
+            Long reset = resetAt.get(id);
+            if (used <= 0 && reset == null) continue;
+            CompoundTag pt = new CompoundTag();
+            pt.putUUID("UUID", id);
+            pt.putInt("Consumed", used);
+            if (reset != null) pt.putLong("ResetAt", reset);
+            stockList.add(pt);
+        }
+        tag.put("PlayerStock", stockList);
         return tag;
     }
 
@@ -151,7 +241,20 @@ public class ShopSlot {
         priceAmount2 = tag.getInt("PriceAmount2");
         if (priceAmount2 <= 0) priceAmount2 = 1;
         maxStock = tag.getInt("MaxStock");
-        currentStock = tag.getInt("CurrentStock");
+
+        consumed.clear();
+        resetAt.clear();
+        if (tag.contains("PlayerStock")) {
+            ListTag stockList = tag.getList("PlayerStock", Tag.TAG_COMPOUND);
+            for (int i = 0; i < stockList.size(); i++) {
+                CompoundTag pt = stockList.getCompound(i);
+                if (!pt.hasUUID("UUID")) continue;
+                UUID id = pt.getUUID("UUID");
+                int used = pt.getInt("Consumed");
+                if (used > 0) consumed.put(id, used);
+                if (pt.contains("ResetAt")) resetAt.put(id, pt.getLong("ResetAt"));
+            }
+        }
     }
 
     private static ItemStack loadStack(HolderLookup.Provider provider, CompoundTag tag, String key) {
@@ -170,6 +273,7 @@ public class ShopSlot {
         priceItem2 = ItemStack.EMPTY;
         priceAmount2 = 1;
         maxStock = INFINITE_STOCK;
-        currentStock = INFINITE_STOCK;
+        consumed.clear();
+        resetAt.clear();
     }
 }

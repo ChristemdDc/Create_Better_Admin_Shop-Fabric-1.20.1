@@ -298,9 +298,14 @@ public class ShopBlock extends BaseEntityBlock {
             } else if (clickedSlot >= 0) {
                 ShopSlot slot = shopBE.getSlot(clickedSlot);
                 if (slot != null && !slot.isEmpty()) {
-                    if (slot.isOutOfStock()) {
-                        player.displayClientMessage(
-                                Component.literal("§c¡Artículo agotado!"), true);
+                    long now = System.currentTimeMillis();
+                    if (slot.isOutOfStockFor(player.getUUID(), now)) {
+                        long secs = slot.getResetRemainingSeconds(player.getUUID(), now);
+                        String msg = slot.isCompra() ? "§c¡Cupo de compra lleno!" : "§c¡Artículo agotado!";
+                        if (secs > 0) {
+                            msg += " §7Reabastece en " + formatDuration(secs);
+                        }
+                        player.displayClientMessage(Component.literal(msg), true);
                     } else {
                         if (findShoppingListInInventory(serverPlayer) == null) {
                             shopBE.clearOrder(player.getUUID());
@@ -397,6 +402,16 @@ public class ShopBlock extends BaseEntityBlock {
         }
     }
 
+    /** Formatea segundos como "23h 5m" o "4m 12s". */
+    public static String formatDuration(long totalSeconds) {
+        long h = totalSeconds / 3600;
+        long m = (totalSeconds % 3600) / 60;
+        long s = totalSeconds % 60;
+        if (h > 0) return h + "h " + m + "m";
+        if (m > 0) return m + "m " + s + "s";
+        return s + "s";
+    }
+
     private void openAdminScreen(ShopBlockEntity shopBE) {
         // Replaces the Fabric `FabricLoader.getEnvironmentType() == CLIENT`
         // check. The method is only called from the client branch already, but
@@ -418,6 +433,10 @@ public class ShopBlock extends BaseEntityBlock {
             Direction facing = state.getValue(FACING);
             ShopPart part = state.getValue(PART);
             BlockPos originPos = part.getOriginPos(pos, facing);
+
+            // Quitar el documento de esta tienda en MongoDB (si está habilitado)
+            com.example.betteradminshop.data.MongoStore.getInstance()
+                    .removeShop(level.dimension().location().toString(), originPos);
 
             for (ShopPart p : ShopPart.values()) {
                 BlockPos partPos = originPos.offset(p.getOffsetFromOrigin(facing));
