@@ -7,9 +7,9 @@ issueTrackerURL = "https://github.com/Fabricators-of-Create/create-fabric-addon-
 modId = "betteradminshop"
 version = "${mod_version_full}"
 displayName = "Create: Better Admin Shop"
-authors = "Me!"
+authors = "ChristemDc"
 description = '''
-Adds a functional shop block to Create Mod with item display, purchase orders, stock management, and Depot integration.
+Addon de Create que añade un puesto de tienda de administrador. Configura slots de venta y de compra (con precios de hasta dos ítems, cantidad por transacción e ítem visible personalizado), con stock por jugador y reabastecimiento cada 24 h. Las compras se entregan en paquetes de Create en la zona de entrega. Incluye un panel de administración con arrastrar y soltar, copiar/pegar de slots y registros de transacciones en SQLite, con espejo opcional a MongoDB para gestión externa.
 '''
 logoFile = "icon.png"
 
