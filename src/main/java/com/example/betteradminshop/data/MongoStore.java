@@ -82,6 +82,9 @@ import java.util.concurrent.TimeUnit;
  *    db.transactions.createIndex({ type: 1, itemId: 1 })
  *
  *  Notas:
+ *    - Este mod NO empaqueta el driver de MongoDB (para evitar conflictos de
+ *      versión con otros mods que lo traen). El driver debe aportarlo otro mod
+ *      presente en el pack; si no está, la integración se autodeshabilita.
  *    - El mod SOLO escribe (único escritor). Leer por SSH es seguro.
  *    - Para que la IA a futuro pueda MODIFICAR precios/stock, hará falta un
  *      paso extra donde el mod LEA de vuelta la colección "shops" y aplique
@@ -140,6 +143,12 @@ public final class MongoStore {
                     dbName,
                     BetterAdminShopConfig.MONGO_TX_COLLECTION.get(),
                     BetterAdminShopConfig.MONGO_SHOP_COLLECTION.get());
+        } catch (NoClassDefFoundError e) {
+            enabled = false;
+            BetterAdminShop.LOGGER.warn(
+                    "[BetterAdminShop] MongoDB está habilitado en la config pero no se encontró el driver "
+                    + "de MongoDB en el classpath. Este mod NO empaqueta el driver: debe aportarlo otro mod. "
+                    + "La integración queda deshabilitada (el resto del mod funciona con SQLite).");
         } catch (Throwable t) {
             enabled = false;
             BetterAdminShop.LOGGER.error(

@@ -13,6 +13,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import com.example.betteradminshop.data.GlobalRestockData;
+import com.example.betteradminshop.data.MongoDriver;
 import com.example.betteradminshop.data.MongoStore;
 import com.example.betteradminshop.data.PurchaseDatabase;
 
@@ -212,11 +213,13 @@ public class ShopBlockEntity extends BlockEntity {
                     type, transactionId, player.getUUID().toString(), player.getName().getString(),
                     itemId, itemName, totalUnits, priceSummary, now, worldPosition, worldKey);
 
-            MongoStore.getInstance().logTransaction(
-                    type, transactionId, slotIndex,
-                    player.getUUID().toString(), player.getName().getString(),
-                    itemId, itemName, totalUnits,
-                    buildPriceLines(slot, bundles), priceSummary, now, worldKey, worldPosition);
+            if (MongoDriver.AVAILABLE) {
+                MongoStore.getInstance().logTransaction(
+                        type, transactionId, slotIndex,
+                        player.getUUID().toString(), player.getName().getString(),
+                        itemId, itemName, totalUnits,
+                        buildPriceLines(slot, bundles), priceSummary, now, worldKey, worldPosition);
+            }
         }
 
         clearOrder(playerId);
@@ -248,6 +251,7 @@ public class ShopBlockEntity extends BlockEntity {
     /** Publica el estado de esta tienda a MongoDB (si está habilitado). */
     public void publishState() {
         if (level == null || level.isClientSide) return;
+        if (!MongoDriver.AVAILABLE) return; // sin driver → no se toca MongoStore
         String world = level.dimension().location().toString();
         MongoStore.getInstance().publishShop(world, worldPosition, slots);
     }

@@ -434,9 +434,11 @@ public class ShopBlock extends BaseEntityBlock {
             ShopPart part = state.getValue(PART);
             BlockPos originPos = part.getOriginPos(pos, facing);
 
-            // Quitar el documento de esta tienda en MongoDB (si está habilitado)
-            com.example.betteradminshop.data.MongoStore.getInstance()
-                    .removeShop(level.dimension().location().toString(), originPos);
+            // Quitar el documento de esta tienda en MongoDB (si el driver está presente)
+            if (com.example.betteradminshop.data.MongoDriver.AVAILABLE) {
+                com.example.betteradminshop.data.MongoStore.getInstance()
+                        .removeShop(level.dimension().location().toString(), originPos);
+            }
 
             for (ShopPart p : ShopPart.values()) {
                 BlockPos partPos = originPos.offset(p.getOffsetFromOrigin(facing));

@@ -49,14 +49,22 @@ public final class AdminShopCommand {
                 .resolve("config")
                 .resolve("betteradminshop_records.db");
         PurchaseDatabase.getInstance().initialize(dbPath);
-        // Espejo opcional a MongoDB (no bloqueante; se autodeshabilita si falla).
-        com.example.betteradminshop.data.MongoStore.getInstance().initialize();
+        // Espejo opcional a MongoDB. Solo se toca MongoStore si el driver está
+        // presente (lo aporta otro mod); si no, se usa solo SQLite.
+        if (com.example.betteradminshop.data.MongoDriver.AVAILABLE) {
+            com.example.betteradminshop.data.MongoStore.getInstance().initialize();
+        } else if (com.example.betteradminshop.config.BetterAdminShopConfig.MONGO_ENABLED.get()) {
+            BetterAdminShop.LOGGER.warn("[BetterAdminShop] MongoDB está habilitado en la config pero "
+                    + "no hay driver de MongoDB en el pack. Se usa solo SQLite.");
+        }
     }
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
         PurchaseDatabase.getInstance().close();
-        com.example.betteradminshop.data.MongoStore.getInstance().close();
+        if (com.example.betteradminshop.data.MongoDriver.AVAILABLE) {
+            com.example.betteradminshop.data.MongoStore.getInstance().close();
+        }
     }
 
     // ── Command registration ──────────────────────────────────────────────────
@@ -147,8 +155,9 @@ public final class AdminShopCommand {
     // ── MongoDB ────────────────────────────────────────────────────────────────
 
     private static int republishShops(CommandSourceStack src) {
-        if (!com.example.betteradminshop.data.MongoStore.getInstance().isEnabled()) {
-            src.sendFailure(Component.literal("§cMongoDB no está habilitado (revisa la config)."));
+        if (!com.example.betteradminshop.data.MongoDriver.AVAILABLE
+                || !com.example.betteradminshop.data.MongoStore.getInstance().isEnabled()) {
+            src.sendFailure(Component.literal("§cMongoDB no está habilitado (revisa la config o el driver)."));
             return 0;
         }
         int n = com.example.betteradminshop.block.ShopBlockEntity.republishAllLoaded();
@@ -158,7 +167,8 @@ public final class AdminShopCommand {
     }
 
     private static int mongoStatus(CommandSourceStack src) {
-        boolean enabled = com.example.betteradminshop.data.MongoStore.getInstance().isEnabled();
+        boolean enabled = com.example.betteradminshop.data.MongoDriver.AVAILABLE
+                && com.example.betteradminshop.data.MongoStore.getInstance().isEnabled();
         int loaded = com.example.betteradminshop.block.ShopBlockEntity.loadedShopCount();
         src.sendSuccess(() -> Component.literal("§7[BetterAdminShop] MongoDB: "
                 + (enabled ? "§aconectado" : "§cdeshabilitado")
