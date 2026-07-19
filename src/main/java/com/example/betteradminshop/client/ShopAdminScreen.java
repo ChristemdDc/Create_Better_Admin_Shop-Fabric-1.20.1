@@ -72,6 +72,26 @@ public class ShopAdminScreen extends Screen {
     private int ventaRectX, compraRectX, bigRectY, bigRectH;
     private int ventaRectW, compraRectW;
 
+    // Botones-icono pequeños (rects calculados al dibujar)
+    private static final int ICON_BTN = 14;
+    private int typeBadgeX, typeBadgeY, typeBadgeW, typeBadgeH; // badge de tipo (clic = alternar)
+    private int copyIconX, copyIconY;   // copiar contenido del slot
+    private int pasteIconX, pasteIconY; // pegar en slot vacío
+    private boolean copyIconShown, pasteIconShown;
+
+    // Portapapeles de slot (estático: persiste mientras el juego esté abierto)
+    private static SlotClipboard clipboard = null;
+
+    // Drag & drop de slots
+    private int dragSourceSlot = -1;   // slot "armado" al presionar
+    private boolean dragging = false;  // se activa al mover el mouse
+    private double pressX, pressY;
+
+    // Tooltip diferido (se dibuja al final del render para quedar encima)
+    private String pendingTooltip;
+    private int pendingTooltipX, pendingTooltipY;
+    private static final int ICON_COPY = 0, ICON_PASTE = 1;
+
     // Slot grid
     private final List<SlotWidget> slotWidgets = new ArrayList<>();
 
@@ -320,6 +340,7 @@ public class ShopAdminScreen extends Screen {
 
     @Override
     public void render(GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        pendingTooltip = null;
         renderBackground(g, mouseX, mouseY, partialTick);
 
         drawPanel(g, leftX, topY, GUI_WIDTH, GUI_HEIGHT);
@@ -335,9 +356,18 @@ public class ShopAdminScreen extends Screen {
             renderSlotWidget(g, sw, slot, sw.slotIndex == selectedSlot, mouseX, mouseY);
         }
 
+        // Resaltar el slot destino mientras se arrastra
+        if (dragging) {
+            SlotWidget target = slotAt(mouseX, mouseY);
+            if (target != null && target.slotIndex != dragSourceSlot) {
+                drawBorder(g, target.x, target.y, target.size, target.size, COL_ACCENT);
+                drawBorder(g, target.x + 1, target.y + 1, target.size - 2, target.size - 2, COL_ACCENT);
+            }
+        }
+
         renderConfigArea(g, mouseX, mouseY);
 
-        if (currentMode == Mode.NORMAL) {
+        if (currentMode == Mode.NORMAL && !dragging) {
             for (SlotWidget sw : slotWidgets) {
                 if (mouseX >= sw.x && mouseX < sw.x + sw.size && mouseY >= sw.y && mouseY < sw.y + sw.size) {
                     ShopSlot slot = shopBE.getSlot(sw.slotIndex);
@@ -356,7 +386,27 @@ public class ShopAdminScreen extends Screen {
             g.pose().translate(0, 0, 350);
             renderPickerOverlay(g, mouseX, mouseY);
             g.pose().popPose();
+        } else {
+            // Ítem que se está arrastrando (sigue al cursor)
+            if (dragging && dragSourceSlot >= 0) {
+                ShopSlot src = shopBE.getSlot(dragSourceSlot);
+                if (src != null && !src.isEmpty()) {
+                    g.pose().pushPose();
+                    g.pose().translate(0, 0, 300);
+                    g.renderItem(src.getRenderItem(), mouseX - 8, mouseY - 8);
+                    g.pose().popPose();
+                }
+            } else if (pendingTooltip != null) {
+                g.renderTooltip(font, Component.literal(pendingTooltip), pendingTooltipX, pendingTooltipY);
+            }
         }
+    }
+
+    private SlotWidget slotAt(double mx, double my) {
+        for (SlotWidget sw : slotWidgets) {
+            if (mx >= sw.x && mx < sw.x + sw.size && my >= sw.y && my < sw.y + sw.size) return sw;
+        }
+        return null;
     }
 
     /** Tooltip resumido al pasar el mouse por un slot del estante. */
@@ -447,12 +497,34 @@ public class ShopAdminScreen extends Screen {
         String slotLabel = "Slot #" + (selectedSlot + 1)
                 + (selectedSlot < ShopBlockEntity.SLOTS_PER_GROUP ? " (Estante Izq.)" : " (Estante Der.)");
         g.drawString(font, slotLabel, cfgLeftX, py + 8, COL_ACCENT);
+
+        copyIconShown = false;
+        pasteIconShown = false;
+        int rightEdge = px + pw - 12;
+
         if (cfgType != null) {
-            drawTypeBadge(g, px + pw - 12, py + 7, cfgType == ShopSlot.Type.COMPRA);
+            // Badge de tipo (clic = alternar Venta/Compra)
+            drawTypeBadge(g, rightEdge, py + 5, cfgType == ShopSlot.Type.COMPRA, mouseX, mouseY);
+            // Icono copiar, a la izquierda del badge
+            if (!cfgSaleItem.isEmpty()) {
+                copyIconX = typeBadgeX - 5 - ICON_BTN;
+                copyIconY = py + 4;
+                drawIconButton(g, copyIconX, copyIconY, mouseX, mouseY, ICON_COPY,
+                        "Copiar contenido de este slot");
+                copyIconShown = true;
+            }
             if (isDirty()) {
                 String dirty = "● sin guardar";
-                g.drawString(font, dirty, px + pw - 70 - font.width(dirty), py + 8, COL_DIRTY);
+                int anchorX = copyIconShown ? copyIconX : typeBadgeX;
+                g.drawString(font, dirty, anchorX - 6 - font.width(dirty), py + 8, COL_DIRTY);
             }
+        } else if (clipboard != null) {
+            // Slot vacío + hay algo copiado → icono pegar (arriba a la derecha)
+            pasteIconX = rightEdge - ICON_BTN;
+            pasteIconY = py + 4;
+            drawIconButton(g, pasteIconX, pasteIconY, mouseX, mouseY, ICON_PASTE,
+                    "Pegar aquí el slot copiado");
+            pasteIconShown = true;
         }
         g.fill(cfgLeftX, py + 19, px + pw - 14, py + 20, COL_BORDER);
 
@@ -463,15 +535,60 @@ public class ShopAdminScreen extends Screen {
         }
     }
 
-    /** Badge de tipo alineado a la derecha, terminando en {@code rightX}. */
-    private void drawTypeBadge(GuiGraphics g, int rightX, int y, boolean compra) {
+    /** Badge de tipo clicable (alterna Venta/Compra). Guarda su rect para el hit-test. */
+    private void drawTypeBadge(GuiGraphics g, int rightX, int y, boolean compra, int mouseX, int mouseY) {
         String label = compra ? "COMPRA" : "VENTA";
-        int w = font.width(label) + 8;
+        int w = font.width(label) + 10;
+        int h = 12;
         int x = rightX - w;
-        g.fill(x, y, x + w, y + 11, compra ? COL_COMPRA_BG : COL_VENTA_BG);
-        g.fill(x, y, x + w, y + 1, compra ? COL_COMPRA : COL_VENTA);
-        g.fill(x, y + 10, x + w, y + 11, compra ? COL_COMPRA : COL_VENTA);
-        g.drawString(font, label, x + 4, y + 2, compra ? COL_COMPRA : COL_VENTA, false);
+        typeBadgeX = x; typeBadgeY = y; typeBadgeW = w; typeBadgeH = h;
+        int accent = compra ? COL_COMPRA : COL_VENTA;
+        boolean hov = mouseX >= x && mouseX < x + w && mouseY >= y && mouseY < y + h;
+        g.fill(x, y, x + w, y + h, hov ? (compra ? COL_COMPRA_DIM : COL_VENTA_DIM)
+                : (compra ? COL_COMPRA_BG : COL_VENTA_BG));
+        drawBorder(g, x, y, w, h, accent);
+        g.drawString(font, label, x + 5, y + 2, hov ? 0xFFFFFFFF : accent, false);
+        if (hov) setTooltip(compra ? "Clic: cambiar a Venta" : "Clic: cambiar a Compra", mouseX, mouseY);
+    }
+
+    private void setTooltip(String text, int mouseX, int mouseY) {
+        pendingTooltip = text;
+        pendingTooltipX = mouseX;
+        pendingTooltipY = mouseY;
+    }
+
+    /** Botón-icono pequeño (copiar / pegar) dibujado con GuiGraphics. */
+    private boolean drawIconButton(GuiGraphics g, int x, int y, int mouseX, int mouseY, int kind, String tooltip) {
+        boolean hov = mouseX >= x && mouseX < x + ICON_BTN && mouseY >= y && mouseY < y + ICON_BTN;
+        int bg = hov ? COL_ACCENT_DIM : 0xFF1A1A2E;
+        int border = hov ? COL_ACCENT : COL_BORDER;
+        g.fill(x, y, x + ICON_BTN, y + ICON_BTN, border);
+        g.fill(x + 1, y + 1, x + ICON_BTN - 1, y + ICON_BTN - 1, bg);
+        int col = hov ? 0xFFFFFFFF : COL_TEXT;
+        if (kind == ICON_COPY) drawCopyGlyph(g, x, y, col, bg);
+        else drawPasteGlyph(g, x, y, col);
+        if (hov && tooltip != null) setTooltip(tooltip, mouseX, mouseY);
+        return hov;
+    }
+
+    /** Icono de copiar: dos recuadros superpuestos. */
+    private static void drawCopyGlyph(GuiGraphics g, int bx, int by, int col, int bg) {
+        int sz = 6;
+        int backX = bx + 6, backY = by + 3;   // recuadro de atrás (arriba-derecha)
+        int frontX = bx + 3, frontY = by + 5;  // recuadro de adelante (abajo-izq)
+        drawBorder(g, backX, backY, sz, sz, col);
+        // Borrar la parte del de atrás que queda dentro del de adelante
+        g.fill(frontX, frontY, frontX + sz, frontY + sz, bg);
+        drawBorder(g, frontX, frontY, sz, sz, col);
+    }
+
+    /** Icono de pegar: portapapeles. */
+    private static void drawPasteGlyph(GuiGraphics g, int bx, int by, int col) {
+        int x0 = bx + 3, y0 = by + 4, w = 8, h = 8;
+        drawBorder(g, x0, y0, w, h, col);
+        g.fill(x0 + 2, y0 + 3, x0 + w - 2, y0 + 4, col); // línea de texto
+        g.fill(x0 + 2, y0 + 5, x0 + w - 2, y0 + 6, col);
+        g.fill(bx + 6, by + 2, bx + 6 + 3, by + 5, col); // pinza superior
     }
 
     // ── Botones grandes de elección de tipo ───────────────────────────────────
@@ -717,6 +834,11 @@ public class ShopAdminScreen extends Screen {
 
         if (selectedSlot >= 0) {
             if (cfgType == null) {
+                // Icono pegar (slot vacío + portapapeles)
+                if (pasteIconShown && inRect(mouseX, mouseY, pasteIconX, pasteIconY, ICON_BTN, ICON_BTN)) {
+                    pasteClipboard();
+                    return true;
+                }
                 // Botones grandes de elección
                 if (inRect(mouseX, mouseY, ventaRectX, bigRectY, ventaRectW, bigRectH)) {
                     cfgType = ShopSlot.Type.VENTA;
@@ -729,6 +851,16 @@ public class ShopAdminScreen extends Screen {
                     return true;
                 }
             } else {
+                // Badge de tipo → alternar Venta/Compra
+                if (inRect(mouseX, mouseY, typeBadgeX, typeBadgeY, typeBadgeW, typeBadgeH)) {
+                    cfgType = (cfgType == ShopSlot.Type.VENTA) ? ShopSlot.Type.COMPRA : ShopSlot.Type.VENTA;
+                    return true;
+                }
+                // Icono copiar
+                if (copyIconShown && inRect(mouseX, mouseY, copyIconX, copyIconY, ICON_BTN, ICON_BTN)) {
+                    copyToClipboard();
+                    return true;
+                }
                 if (saleItemBtn.mouseClicked(mouseX, mouseY)) return true;
                 if (renderItemBtn.mouseClicked(mouseX, mouseY)) return true;
                 if (!cfgRenderOverride.isEmpty() && renderResetBtn.mouseClicked(mouseX, mouseY)) return true;
@@ -747,15 +879,60 @@ public class ShopAdminScreen extends Screen {
             }
         }
 
-        for (SlotWidget sw : slotWidgets) {
-            if (mouseX >= sw.x && mouseX < sw.x + sw.size &&
-                    mouseY >= sw.y && mouseY < sw.y + sw.size) {
+        // Slots del estante: un slot con contenido "arma" un drag; uno vacío
+        // se selecciona directo. La selección de un slot con contenido ocurre
+        // al soltar sin arrastrar (ver mouseReleased).
+        SlotWidget sw = slotAt(mouseX, mouseY);
+        if (sw != null) {
+            ShopSlot slot = shopBE.getSlot(sw.slotIndex);
+            if (slot != null && !slot.isEmpty()) {
+                dragSourceSlot = sw.slotIndex;
+                dragging = false;
+                pressX = mouseX;
+                pressY = mouseY;
+            } else {
                 selectSlot(sw.slotIndex);
-                return true;
             }
+            return true;
         }
 
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dx, double dy) {
+        if (button == 0 && dragSourceSlot >= 0 && !dragging) {
+            if (Math.abs(mouseX - pressX) > 3 || Math.abs(mouseY - pressY) > 3) {
+                dragging = true;
+            }
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dx, dy);
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && dragSourceSlot >= 0) {
+            int source = dragSourceSlot;
+            boolean wasDragging = dragging;
+            dragSourceSlot = -1;
+            dragging = false;
+
+            SlotWidget target = slotAt(mouseX, mouseY);
+            if (wasDragging) {
+                // Arrastre completado: intercambiar con el slot destino
+                if (target != null && target.slotIndex != source) {
+                    ModNetworking.sendSwapSlots(shopPos, source, target.slotIndex);
+                    shopBE.swapSlots(source, target.slotIndex); // feedback inmediato
+                    selectSlot(target.slotIndex); // el contenido quedó en destino
+                }
+                return true;
+            } else {
+                // Fue un clic normal (sin arrastrar) → seleccionar el slot
+                selectSlot(source);
+                return true;
+            }
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
     }
 
     private static boolean inRect(double mx, double my, int x, int y, int w, int h) {
@@ -990,6 +1167,35 @@ public class ShopAdminScreen extends Screen {
         unfocusAllFields();
     }
 
+    // ── Copiar / pegar (portapapeles de slot) ─────────────────────────────────
+
+    /** Copia el contenido actual del editor al portapapeles. */
+    private void copyToClipboard() {
+        if (cfgType == null || cfgSaleItem.isEmpty()) return;
+        clipboard = new SlotClipboard(
+                cfgType, cfgSaleItem, cfgRenderOverride,
+                Math.max(1, parseInt(sellAmountField.getValue(), 1)),
+                cfgPriceItem, Math.max(1, parseInt(price1AmountField.getValue(), 1)),
+                cfgPriceItem2, Math.max(1, parseInt(price2AmountField.getValue(), 1)),
+                Math.max(-1, parseInt(stockField.getValue(), ShopSlot.INFINITE_STOCK)));
+    }
+
+    /** Pega el portapapeles en el slot vacío seleccionado y lo guarda. */
+    private void pasteClipboard() {
+        if (clipboard == null || selectedSlot < 0) return;
+        cfgType = clipboard.type;
+        cfgSaleItem = clipboard.saleItem.copy();
+        cfgRenderOverride = clipboard.renderOverride.copy();
+        cfgPriceItem = clipboard.priceItem.copy();
+        cfgPriceItem2 = clipboard.priceItem2.copy();
+        sellAmountField.setValue(String.valueOf(clipboard.sellAmount));
+        price1AmountField.setValue(String.valueOf(clipboard.priceAmount));
+        price2AmountField.setValue(String.valueOf(clipboard.priceAmount2));
+        stockField.setValue(clipboard.maxStock == ShopSlot.INFINITE_STOCK ?
+                "-1" : String.valueOf(clipboard.maxStock));
+        saveConfig(); // aplicar de inmediato (aparece el producto)
+    }
+
     @Override
     public boolean isPauseScreen() {
         return false;
@@ -1135,6 +1341,26 @@ public class ShopAdminScreen extends Screen {
             this.x = x;
             this.y = y;
             this.size = size;
+        }
+    }
+
+    /** Snapshot del contenido de un slot para copiar/pegar. */
+    private static class SlotClipboard {
+        final ShopSlot.Type type;
+        final ItemStack saleItem, renderOverride, priceItem, priceItem2;
+        final int sellAmount, priceAmount, priceAmount2, maxStock;
+
+        SlotClipboard(ShopSlot.Type type, ItemStack saleItem, ItemStack renderOverride, int sellAmount,
+                      ItemStack priceItem, int priceAmount, ItemStack priceItem2, int priceAmount2, int maxStock) {
+            this.type = type;
+            this.saleItem = saleItem.copy();
+            this.renderOverride = renderOverride.copy();
+            this.sellAmount = sellAmount;
+            this.priceItem = priceItem.copy();
+            this.priceAmount = priceAmount;
+            this.priceItem2 = priceItem2.copy();
+            this.priceAmount2 = priceAmount2;
+            this.maxStock = maxStock;
         }
     }
 }

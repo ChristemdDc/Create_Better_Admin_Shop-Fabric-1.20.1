@@ -101,6 +101,18 @@ public final class ModNetworking {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /** Intercambia (o mueve) dos slots del estante. */
+    public record SwapSlots(BlockPos pos, int indexA, int indexB) implements CustomPacketPayload {
+        public static final Type<SwapSlots> TYPE = new Type<>(BetterAdminShop.id("swap_slots"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, SwapSlots> STREAM_CODEC = StreamCodec.composite(
+                BlockPos.STREAM_CODEC, SwapSlots::pos,
+                ByteBufCodecs.VAR_INT, SwapSlots::indexA,
+                ByteBufCodecs.VAR_INT, SwapSlots::indexB,
+                SwapSlots::new
+        );
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     // -------- Registration --------------------------------------------------
 
     public static void register(RegisterPayloadHandlersEvent event) {
@@ -111,6 +123,7 @@ public final class ModNetworking {
         r.playToServer(SetSlotConfig.TYPE, SetSlotConfig.STREAM_CODEC, ModNetworking::handleSetSlotConfig);
         r.playToServer(RestockSlot.TYPE,   RestockSlot.STREAM_CODEC,   ModNetworking::handleRestockSlot);
         r.playToServer(ClearSlot.TYPE,     ClearSlot.STREAM_CODEC,     ModNetworking::handleClearSlot);
+        r.playToServer(SwapSlots.TYPE,     SwapSlots.STREAM_CODEC,     ModNetworking::handleSwapSlots);
 
         // Records panel
         r.playToServer(RequestRecordsPayload.TYPE, RequestRecordsPayload.STREAM_CODEC, ModNetworking::handleRequestRecords);
@@ -152,6 +165,13 @@ public final class ModNetworking {
         if (player == null || !player.hasPermissions(4)) return;
         ShopBlockEntity shop = getShop(player, msg.pos());
         if (shop != null) shop.clearSlot(msg.slotIndex());
+    }
+
+    private static void handleSwapSlots(SwapSlots msg, IPayloadContext ctx) {
+        ServerPlayer player = asServer(ctx);
+        if (player == null || !player.hasPermissions(4)) return;
+        ShopBlockEntity shop = getShop(player, msg.pos());
+        if (shop != null) shop.swapSlots(msg.indexA(), msg.indexB());
     }
 
     // ---- Records panel (server side) --------------------------------------
@@ -205,5 +225,9 @@ public final class ModNetworking {
 
     public static void sendClearSlot(BlockPos pos, int slotIndex) {
         PacketDistributor.sendToServer(new ClearSlot(pos, slotIndex));
+    }
+
+    public static void sendSwapSlots(BlockPos pos, int indexA, int indexB) {
+        PacketDistributor.sendToServer(new SwapSlots(pos, indexA, indexB));
     }
 }

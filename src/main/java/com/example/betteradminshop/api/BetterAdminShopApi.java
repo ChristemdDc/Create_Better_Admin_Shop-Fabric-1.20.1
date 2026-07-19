@@ -15,7 +15,7 @@ import net.minecraft.world.item.ItemStack;
  * Quedará persistido en el mundo y sincronizado a los clientes, apareciendo en
  * el selector "Ítem en venta" / "Ítem de precio" de la tienda.
  *
- * <p>Equivalente por comando (solo OP): {@code /adminishop items add <item>}.
+ * <p>Equivalente por comando (solo OP): {@code /tiendas items add <item>}.
  *
  * <p>Todas las llamadas deben hacerse en el hilo del servidor.
  */

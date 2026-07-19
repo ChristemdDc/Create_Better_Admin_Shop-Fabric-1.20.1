@@ -13,7 +13,7 @@ import java.util.List;
 
 /**
  * Server → Client: carries a page of purchase records plus pagination metadata.
- * Also used as the initial payload when the player runs /adminishop records.
+ * Also used as the initial payload when the player runs /tiendas records.
  */
 public record RecordsDataPayload(
         List<PurchaseRecord> records,

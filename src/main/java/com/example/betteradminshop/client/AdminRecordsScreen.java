@@ -34,7 +34,7 @@ import java.util.UUID;
  *  - Tooltip al pasar el mouse por una fila con TODOS los detalles: ítem, id,
  *    cantidad, precio completo, fecha exacta y jugador.
  *
- * Se abre desde /adminishop records y se refresca in-place al paginar,
+ * Se abre desde /tiendas records y se refresca in-place al paginar,
  * ordenar, filtrar o cambiar de pestaña.
  */
 public class AdminRecordsScreen extends Screen {

@@ -12,6 +12,7 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import com.example.betteradminshop.data.GlobalRestockData;
 import com.example.betteradminshop.data.MongoStore;
 import com.example.betteradminshop.data.PurchaseDatabase;
 
@@ -45,6 +46,9 @@ public class ShopBlockEntity extends BlockEntity {
     /** Tiendas cargadas del lado servidor (para republicar el estado en Mongo). */
     private static final java.util.Set<ShopBlockEntity> LOADED =
             java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    /** Momento (ms) hasta el que esta tienda ya aplicó el restock global. */
+    private long lastGlobalRestockMs = 0L;
 
     // Render positions for group 1 (elements 37-48)
     public static final float[][] GROUP1_POSITIONS = {
@@ -255,6 +259,7 @@ public class ShopBlockEntity extends BlockEntity {
         super.clearRemoved();
         if (level != null && !level.isClientSide) {
             LOADED.add(this);
+            catchUpGlobalRestock();
         }
     }
 
@@ -504,6 +509,60 @@ public class ShopBlockEntity extends BlockEntity {
         }
     }
 
+    /**
+     * Intercambia dos slots por completo (ítem, precio, stock por jugador,
+     * temporizadores). Sirve para reordenar productos en el estante.
+     */
+    public void swapSlots(int a, int b) {
+        if (a < 0 || a >= TOTAL_SLOTS || b < 0 || b >= TOTAL_SLOTS || a == b) return;
+        ShopSlot tmp = slots[a];
+        slots[a] = slots[b];
+        slots[b] = tmp;
+        setChanged();
+        syncToClient();
+        publishState();
+    }
+
+    // ── Restock global ──────────────────────────────────────────────────────
+
+    /** Reabastece todos los slots (para todos los jugadores) y marca el instante. */
+    public void applyGlobalRestock(long timestamp) {
+        for (ShopSlot slot : slots) {
+            slot.restock();
+        }
+        lastGlobalRestockMs = timestamp;
+        setChanged();
+        syncToClient();
+        publishState();
+    }
+
+    /**
+     * Si hubo un restock global mientras esta tienda estaba descargada, lo
+     * aplica ahora (al cargarse). Llamado desde {@link #clearRemoved()}.
+     */
+    private void catchUpGlobalRestock() {
+        if (!(level instanceof ServerLevel serverLevel)) return;
+        long global = GlobalRestockData.get(serverLevel.getServer()).getTimestamp();
+        if (global > lastGlobalRestockMs) {
+            for (ShopSlot slot : slots) {
+                slot.restock();
+            }
+            lastGlobalRestockMs = global;
+            setChanged();
+            syncToClient();
+        }
+    }
+
+    /** Reabastece todas las tiendas cargadas. Devuelve cuántas. */
+    public static int globalRestockAllLoaded(long timestamp) {
+        int n = 0;
+        for (ShopBlockEntity be : LOADED) {
+            be.applyGlobalRestock(timestamp);
+            n++;
+        }
+        return n;
+    }
+
     // ===== NBT (1.20.5+ data components migration) =========================
 
     @Override
@@ -520,6 +579,8 @@ public class ShopBlockEntity extends BlockEntity {
             queueTag.add(entry.save(registries));
         }
         tag.put("DeliveryQueue", queueTag);
+
+        tag.putLong("LastGlobalRestock", lastGlobalRestockMs);
     }
 
     @Override
@@ -553,6 +614,8 @@ public class ShopBlockEntity extends BlockEntity {
                 }
             }
         }
+
+        lastGlobalRestockMs = tag.getLong("LastGlobalRestock");
     }
 
     @Override

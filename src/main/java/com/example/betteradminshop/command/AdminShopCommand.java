@@ -13,8 +13,13 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.item.ItemArgument;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundSetSubtitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitleTextPacket;
+import net.minecraft.network.protocol.game.ClientboundSetTitlesAnimationPacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -27,8 +32,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Registers the {@code /adminishop records} command (OP level 4) and
- * handles server lifecycle events for the SQLite database.
+ * Registers the {@code /tiendas} command tree (OP level 4) — records,
+ * restock, items, mongo — and handles server lifecycle events for the DBs.
  */
 @EventBusSubscriber(modid = BetterAdminShop.ID, bus = EventBusSubscriber.Bus.GAME)
 public final class AdminShopCommand {
@@ -59,7 +64,7 @@ public final class AdminShopCommand {
     @SubscribeEvent
     public static void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(
-                Commands.literal("adminishop")
+                Commands.literal("tiendas")
                         .requires(src -> src.hasPermission(4))
                         .then(Commands.literal("records")
                                 .executes(ctx -> {
@@ -69,10 +74,13 @@ public final class AdminShopCommand {
                                     }
                                     return openRecords(player, 0, "", "purchase_timestamp_utc", false, "");
                                 }))
+                        // ── Restock global (todas las tiendas, todos los jugadores) ─
+                        .then(Commands.literal("restock")
+                                .executes(ctx -> globalRestock(ctx.getSource())))
                         // ── Ítems dinámicos del selector de la tienda ──────────────
                         .then(Commands.literal("items")
                                 // Añade un ítem (con componentes/NBT) a la lista del selector.
-                                // Ej: /adminishop items add otromod:item_dinamico
+                                // Ej: /tiendas items add otromod:item_dinamico
                                 .then(Commands.literal("add")
                                         .then(Commands.argument("item", ItemArgument.item(event.getBuildContext()))
                                                 .executes(ctx -> {
@@ -107,6 +115,33 @@ public final class AdminShopCommand {
                                 .then(Commands.literal("status")
                                         .executes(ctx -> mongoStatus(ctx.getSource()))))
         );
+    }
+
+    // ── Restock global ─────────────────────────────────────────────────────────
+
+    private static int globalRestock(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+
+        long now = System.currentTimeMillis();
+        // Marca el instante global (para tiendas descargadas) y reabastece las cargadas.
+        com.example.betteradminshop.data.GlobalRestockData.get(server).setTimestamp(now);
+        int shops = com.example.betteradminshop.block.ShopBlockEntity.globalRestockAllLoaded(now);
+
+        // Notificación a todos los jugadores: title + subtitle (+ chat y sonido).
+        Component title = Component.literal("§a§l✦ Tiendas Reabastecidas ✦");
+        Component subtitle = Component.literal("§7El stock se restableció para todos los jugadores");
+        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
+            p.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+            p.connection.send(new ClientboundSetSubtitleTextPacket(subtitle));
+            p.connection.send(new ClientboundSetTitleTextPacket(title));
+            p.sendSystemMessage(Component.literal("§a[Tienda] §fLas tiendas han sido reabastecidas."));
+            p.playNotifySound(SoundEvents.PLAYER_LEVELUP, SoundSource.MASTER, 0.6f, 1.4f);
+        }
+
+        src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Restock global aplicado a "
+                + shops + " tiendas cargadas. §7(las descargadas se reabastecen al cargarse)"), true);
+        return Command.SINGLE_SUCCESS;
     }
 
     // ── MongoDB ────────────────────────────────────────────────────────────────
