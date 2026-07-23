@@ -1,4 +1,6 @@
 {
   "block.betteradminshop.shop_block": "Tienda",
-  "itemGroup.betteradminshop.main": "Create: Better Admin Shop"
+  "itemGroup.betteradminshop.main": "Create: Better Admin Shop",
+  "key.categories.betteradminshop": "Create: Better Admin Shop",
+  "key.betteradminshop.toggle_boxes": "Ocultar/mostrar recuadros de la tienda"
 }

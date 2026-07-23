@@ -52,6 +52,13 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         Direction facing = state.getValue(BlockStateProperties.HORIZONTAL_FACING);
 
         int hoveredSlot = getHoveredSlot(be, partialTick);
+        // Los ítems (y el paquete de entrega) SIEMPRE se renderizan, también en
+        // modo espectador. Solo se ocultan los RECUADROS de selección: con el
+        // keybind (sin asignar por defecto) o en espectador, para que no
+        // molesten durante las cinemáticas.
+        var localPlayer = Minecraft.getInstance().player;
+        boolean spectator = localPlayer != null && localPlayer.isSpectator();
+        boolean showBoxes = !ShopKeybinds.areBoxesHidden() && !spectator;
 
         poseStack.pushPose();
         applyFacingRotation(poseStack, facing);
@@ -62,7 +69,7 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
             if (!slot.isEmpty()) {
                 renderShopItem(poseStack, bufferSource, slot, pos, packedLight, packedOverlay);
             }
-            if (hoveredSlot == i) {
+            if (showBoxes && hoveredSlot == i) {
                 renderSelectionBox(poseStack, bufferSource, pos);
             }
         }
@@ -73,13 +80,13 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
             if (!slot.isEmpty()) {
                 renderShopItem(poseStack, bufferSource, slot, pos, packedLight, packedOverlay);
             }
-            if (hoveredSlot == ShopBlockEntity.SLOTS_PER_GROUP + i) {
+            if (showBoxes && hoveredSlot == ShopBlockEntity.SLOTS_PER_GROUP + i) {
                 renderSelectionBox(poseStack, bufferSource, pos);
             }
         }
 
         // Render confirmarcompra selection box when looking at the confirm panel
-        if (hoveredSlot == -2) {
+        if (showBoxes && hoveredSlot == -2) {
             renderConfirmarSelectionBox(poseStack, bufferSource);
         }
 
@@ -87,7 +94,7 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
         if (be.hasDelivery()) {
             renderEntregaPackage(poseStack, bufferSource, packedLight, packedOverlay);
         }
-        if (hoveredSlot == -3) {
+        if (showBoxes && hoveredSlot == -3) {
             renderEntregaSelectionBox(poseStack, bufferSource);
         }
 

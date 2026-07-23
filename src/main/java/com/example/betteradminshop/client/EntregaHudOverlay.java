@@ -61,6 +61,7 @@ public class EntregaHudOverlay implements LayeredDraw.Layer {
     public void render(GuiGraphics gui, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (mc.player.isSpectator()) return; // oculto en modo espectador (cinemáticas)
         if (mc.screen != null) return; // hide when a screen is open
         if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.BLOCK) return;
 

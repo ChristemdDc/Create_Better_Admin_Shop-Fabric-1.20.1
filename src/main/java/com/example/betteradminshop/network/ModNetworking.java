@@ -101,6 +101,27 @@ public final class ModNetworking {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /** Aplica una plantilla completa (los 24 slots) a una tienda. */
+    public record ApplyShopTemplate(BlockPos pos, net.minecraft.nbt.CompoundTag template)
+            implements CustomPacketPayload {
+        public static final Type<ApplyShopTemplate> TYPE = new Type<>(BetterAdminShop.id("apply_shop_template"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, ApplyShopTemplate> STREAM_CODEC =
+                new StreamCodec<>() {
+                    @Override
+                    public ApplyShopTemplate decode(RegistryFriendlyByteBuf buf) {
+                        BlockPos pos = BlockPos.STREAM_CODEC.decode(buf);
+                        return new ApplyShopTemplate(pos, buf.readNbt());
+                    }
+
+                    @Override
+                    public void encode(RegistryFriendlyByteBuf buf, ApplyShopTemplate p) {
+                        BlockPos.STREAM_CODEC.encode(buf, p.pos());
+                        buf.writeNbt(p.template());
+                    }
+                };
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     /** Intercambia (o mueve) dos slots del estante. */
     public record SwapSlots(BlockPos pos, int indexA, int indexB) implements CustomPacketPayload {
         public static final Type<SwapSlots> TYPE = new Type<>(BetterAdminShop.id("swap_slots"));
@@ -124,6 +145,8 @@ public final class ModNetworking {
         r.playToServer(RestockSlot.TYPE,   RestockSlot.STREAM_CODEC,   ModNetworking::handleRestockSlot);
         r.playToServer(ClearSlot.TYPE,     ClearSlot.STREAM_CODEC,     ModNetworking::handleClearSlot);
         r.playToServer(SwapSlots.TYPE,     SwapSlots.STREAM_CODEC,     ModNetworking::handleSwapSlots);
+        r.playToServer(ApplyShopTemplate.TYPE, ApplyShopTemplate.STREAM_CODEC,
+                ModNetworking::handleApplyShopTemplate);
 
         // Records panel
         r.playToServer(RequestRecordsPayload.TYPE, RequestRecordsPayload.STREAM_CODEC, ModNetworking::handleRequestRecords);
@@ -172,6 +195,16 @@ public final class ModNetworking {
         if (player == null || !player.hasPermissions(4)) return;
         ShopBlockEntity shop = getShop(player, msg.pos());
         if (shop != null) shop.swapSlots(msg.indexA(), msg.indexB());
+    }
+
+    private static void handleApplyShopTemplate(ApplyShopTemplate msg, IPayloadContext ctx) {
+        ServerPlayer player = asServer(ctx);
+        if (player == null || !player.hasPermissions(4)) return;
+        if (msg.template() == null) return;
+        ShopBlockEntity shop = getShop(player, msg.pos());
+        if (shop != null) {
+            shop.applyTemplate(player.registryAccess(), msg.template());
+        }
     }
 
     // ---- Records panel (server side) --------------------------------------
@@ -229,5 +262,9 @@ public final class ModNetworking {
 
     public static void sendSwapSlots(BlockPos pos, int indexA, int indexB) {
         PacketDistributor.sendToServer(new SwapSlots(pos, indexA, indexB));
+    }
+
+    public static void sendApplyShopTemplate(BlockPos pos, net.minecraft.nbt.CompoundTag template) {
+        PacketDistributor.sendToServer(new ApplyShopTemplate(pos, template));
     }
 }

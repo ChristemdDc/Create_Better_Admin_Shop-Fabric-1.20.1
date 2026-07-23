@@ -2,6 +2,7 @@ package com.example.betteradminshop;
 
 import com.example.betteradminshop.client.EntregaHudOverlay;
 import com.example.betteradminshop.client.ShopBlockEntityRenderer;
+import com.example.betteradminshop.client.ShopKeybinds;
 import com.example.betteradminshop.client.SlotInfoHudOverlay;
 import com.example.betteradminshop.registry.ModBlockEntities;
 
@@ -11,6 +12,7 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 
 /**
  * Client-only setup. Equivalent of the Fabric {@code ClientModInitializer}.
@@ -36,5 +38,10 @@ public final class BetterAdminShopClient {
         event.registerAboveAll(
                 ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "slot_info_hud"),
                 new SlotInfoHudOverlay());
+    }
+
+    @SubscribeEvent
+    public static void registerKeyMappings(RegisterKeyMappingsEvent event) {
+        event.register(ShopKeybinds.TOGGLE_BOXES);
     }
 }

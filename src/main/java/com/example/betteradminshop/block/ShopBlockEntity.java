@@ -51,6 +51,14 @@ public class ShopBlockEntity extends BlockEntity {
     /** Momento (ms) hasta el que esta tienda ya aplicó el restock global. */
     private long lastGlobalRestockMs = 0L;
 
+    /**
+     * Orientación real de esta tienda, fijada al colocarla. Es la fuente de
+     * verdad: si alguna herramienta externa edita el FACING/PART del blockstate
+     * (editores de propiedades, llaves de otros mods), {@link #validateStructure()}
+     * lo revierte a este valor para que el multibloque nunca se desajuste.
+     */
+    private Direction lockedFacing = null;
+
     // Render positions for group 1 (elements 37-48)
     public static final float[][] GROUP1_POSITIONS = {
             {3f/16, 13.8f/16, 3.7f/16},
@@ -557,6 +565,157 @@ public class ShopBlockEntity extends BlockEntity {
         }
     }
 
+    // ── Plantillas (copiar / pegar tienda completa) ─────────────────────────
+
+    /**
+     * Snapshot de la CONFIGURACIÓN de los 24 slots: tipo, ítem, ítem visible,
+     * cantidad, precios y stock máximo. NO incluye estado vivo (consumo por
+     * jugador ni entregas pendientes) — eso es propio de cada tienda.
+     */
+    public CompoundTag saveTemplate(HolderLookup.Provider provider) {
+        CompoundTag tag = new CompoundTag();
+        ListTag list = new ListTag();
+        for (ShopSlot slot : slots) {
+            CompoundTag st = slot.save(provider);
+            st.remove("PlayerStock"); // la plantilla no lleva stock por jugador
+            list.add(st);
+        }
+        tag.put("Slots", list);
+        return tag;
+    }
+
+    /**
+     * Aplica una plantilla: reemplaza la configuración de TODOS los slots.
+     * El stock por jugador queda reiniciado (todos con stock completo).
+     */
+    public void applyTemplate(HolderLookup.Provider provider, CompoundTag tag) {
+        if (tag == null || !tag.contains("Slots")) return;
+        ListTag list = tag.getList("Slots", Tag.TAG_COMPOUND);
+        for (int i = 0; i < TOTAL_SLOTS; i++) {
+            if (i < list.size()) {
+                try {
+                    slots[i].load(provider, list.getCompound(i));
+                } catch (Exception e) {
+                    com.example.betteradminshop.BetterAdminShop.LOGGER
+                            .error("[BetterAdminShop] Slot {} inválido en la plantilla, se vacía", i, e);
+                    slots[i].clear();
+                }
+            } else {
+                slots[i].clear();
+            }
+        }
+        setChanged();
+        syncToClient();
+        publishState();
+    }
+
+    /**
+     * Hook de vanilla al copiar el bloque a un ítem (Ctrl + clic-rueda): quita
+     * el estado vivo para que el ítem clonado lleve SOLO la plantilla.
+     */
+    @Override
+    public void removeComponentsFromTag(CompoundTag tag) {
+        super.removeComponentsFromTag(tag);
+        tag.remove("DeliveryQueue");
+        tag.remove("LastGlobalRestock");
+        tag.remove("LockedFacing");
+        if (tag.contains("Slots")) {
+            ListTag list = tag.getList("Slots", Tag.TAG_COMPOUND);
+            for (int i = 0; i < list.size(); i++) {
+                list.getCompound(i).remove("PlayerStock");
+            }
+        }
+    }
+
+    // ── Bloqueo de orientación / reparación de la estructura ────────────────
+
+    /** Fija la orientación real de la tienda (al colocarla). */
+    public void setLockedFacing(Direction facing) {
+        this.lockedFacing = facing;
+        setChanged();
+    }
+
+    public Direction getLockedFacing() {
+        return lockedFacing;
+    }
+
+    /**
+     * ¿La posición {@code p} pertenece a ESTA tienda? Se calcula desde el origen
+     * y la orientación bloqueada (que ninguna herramienta externa puede tocar),
+     * así que sigue siendo fiable aunque el blockstate esté corrupto.
+     *
+     * Imprescindible con tiendas pegadas: distingue cuál es la dueña del bloque.
+     */
+    public boolean coversPosition(BlockPos p) {
+        Direction facing = lockedFacing;
+        if (facing == null) {
+            if (level == null) return false;
+            BlockState st = level.getBlockState(worldPosition);
+            if (!(st.getBlock() instanceof ShopBlock)) return false;
+            facing = st.getValue(ShopBlock.FACING);
+        }
+        for (ShopPart part : ShopPart.values()) {
+            if (worldPosition.offset(part.getOffsetFromOrigin(facing)).equals(p)) return true;
+        }
+        return false;
+    }
+
+    /** ¿Esa posición pertenece a OTRA tienda? (para no pisar tiendas vecinas). */
+    private boolean coveredByAnotherShop(BlockPos p) {
+        if (level == null) return false;
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (level.getBlockEntity(p.offset(dx, dy, dz)) instanceof ShopBlockEntity other
+                            && other != this && other.coversPosition(p)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Fuerza a los 4 bloques de la tienda a su FACING/PART correctos según
+     * {@link #lockedFacing}. Revierte cualquier edición externa del blockstate
+     * (herramientas de rotación de otros mods) sin depender de rotate().
+     */
+    public void validateStructure() {
+        if (!(level instanceof ServerLevel)) return;
+        BlockState originState = level.getBlockState(worldPosition);
+        if (!(originState.getBlock() instanceof ShopBlock)) return;
+
+        // Tiendas colocadas antes de esta versión: adoptar su orientación actual.
+        if (lockedFacing == null) {
+            lockedFacing = originState.getValue(ShopBlock.FACING);
+            setChanged();
+        }
+        Direction facing = lockedFacing;
+
+        if (originState.getValue(ShopBlock.FACING) != facing
+                || originState.getValue(ShopBlock.PART) != ShopPart.ORIGIN) {
+            level.setBlock(worldPosition, originState
+                    .setValue(ShopBlock.FACING, facing)
+                    .setValue(ShopBlock.PART, ShopPart.ORIGIN), 3);
+        }
+
+        for (ShopPart part : ShopPart.values()) {
+            if (part == ShopPart.ORIGIN) continue;
+            BlockPos partPos = worldPosition.offset(part.getOffsetFromOrigin(facing));
+            BlockState st = level.getBlockState(partPos);
+            if (!(st.getBlock() instanceof ShopBlock)) continue;
+            // Seguridad con tiendas pegadas: si ese bloque es de otra tienda,
+            // no tocarlo (si no, la repararíamos "encima" y la romperíamos).
+            if (coveredByAnotherShop(partPos)) continue;
+            if (st.getValue(ShopBlock.FACING) != facing || st.getValue(ShopBlock.PART) != part) {
+                level.setBlock(partPos, st
+                        .setValue(ShopBlock.FACING, facing)
+                        .setValue(ShopBlock.PART, part), 3);
+            }
+        }
+    }
+
     /** Reabastece todas las tiendas cargadas. Devuelve cuántas. */
     public static int globalRestockAllLoaded(long timestamp) {
         int n = 0;
@@ -585,6 +744,9 @@ public class ShopBlockEntity extends BlockEntity {
         tag.put("DeliveryQueue", queueTag);
 
         tag.putLong("LastGlobalRestock", lastGlobalRestockMs);
+        if (lockedFacing != null) {
+            tag.putString("LockedFacing", lockedFacing.getSerializedName());
+        }
     }
 
     @Override
@@ -620,6 +782,8 @@ public class ShopBlockEntity extends BlockEntity {
         }
 
         lastGlobalRestockMs = tag.getLong("LastGlobalRestock");
+        lockedFacing = tag.contains("LockedFacing")
+                ? Direction.byName(tag.getString("LockedFacing")) : null;
     }
 
     @Override

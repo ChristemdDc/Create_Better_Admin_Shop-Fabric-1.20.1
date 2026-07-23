@@ -82,6 +82,10 @@ public class ShopAdminScreen extends Screen {
     // Portapapeles de slot (estático: persiste mientras el juego esté abierto)
     private static SlotClipboard clipboard = null;
 
+    /** Portapapeles de TIENDA COMPLETA (plantilla de los 24 slots). */
+    private static net.minecraft.nbt.CompoundTag shopClipboard = null;
+    private CustomButton copyShopBtn, pasteShopBtn;
+
     // Drag & drop de slots
     private int dragSourceSlot = -1;   // slot "armado" al presionar
     private boolean dragging = false;  // se activa al mover el mouse
@@ -171,25 +175,30 @@ public class ShopAdminScreen extends Screen {
         }
     }
 
-    /** Reconstruye la lista del selector: ítems del registro + dinámicos. */
+    /** Reconstruye la lista del selector: dinámicos primero + ítems del registro. */
     private void rebuildAllItems() {
         allItems.clear();
-        for (Item item : BuiltInRegistries.ITEM) {
-            if (item != Items.AIR) {
-                allItems.add(new ItemStack(item));
-            }
+
+        // 1) Ítems dinámicos, primero para que sean fáciles de encontrar:
+        //    - Cretania Recipes (auto-detectados por reflexión, si el mod está)
+        //    - registrados manualmente vía /tiendas items (sincronizados del server)
+        for (ItemStack s : CretaniaCompat.items()) {
+            if (!s.isEmpty()) allItems.add(s.copyWithCount(1));
         }
-        // Ítems dinámicos (creados en juego por otros mods), sincronizados desde
-        // el servidor. Se muestran primero para que sean fáciles de encontrar.
-        List<ItemStack> dynamic = ClientDynamicItems.get();
-        if (!dynamic.isEmpty()) {
-            List<ItemStack> merged = new ArrayList<>(dynamic.size() + allItems.size());
-            for (ItemStack s : dynamic) {
-                if (!s.isEmpty()) merged.add(s.copyWithCount(1));
+        for (ItemStack s : ClientDynamicItems.get()) {
+            if (!s.isEmpty()) allItems.add(s.copyWithCount(1));
+        }
+
+        // 2) Ítems del registro. Si Cretania está, se ocultan sus ítems BASE
+        //    (custom / custom_block) porque lo útil son las variantes dinámicas.
+        boolean hideCretaniaBase = CretaniaCompat.isPresent();
+        for (Item item : BuiltInRegistries.ITEM) {
+            if (item == Items.AIR) continue;
+            if (hideCretaniaBase) {
+                String id = BuiltInRegistries.ITEM.getKey(item).toString();
+                if (id.equals(CretaniaCompat.BASE_ITEM) || id.equals(CretaniaCompat.BASE_BLOCK)) continue;
             }
-            merged.addAll(allItems);
-            allItems.clear();
-            allItems.addAll(merged);
+            allItems.add(new ItemStack(item));
         }
     }
 
@@ -261,6 +270,12 @@ public class ShopAdminScreen extends Screen {
         price2RemoveBtn = new CustomButton("✕ quitar", cfgRightX + cfgRightW - 50, rRow(1), 50, 9,
                 () -> cfgPriceItem2 = ItemStack.EMPTY);
 
+        // Copiar/pegar TIENDA COMPLETA (barra de título, a la derecha)
+        copyShopBtn = new CustomButton("Copiar", leftX + GUI_WIDTH - 146, topY + 3, 64, 14,
+                this::copyShop);
+        pasteShopBtn = new CustomButton("Pegar", leftX + GUI_WIDTH - 74, topY + 3, 64, 14,
+                this::pasteShop);
+
         int actY = rRow(2) + 6;
         int halfW = (cfgRightW - 4) / 2;
         saveBtn    = new CustomButton("✔ Guardar", cfgRightX, actY, cfgRightW, 18, this::saveConfig);
@@ -307,22 +322,52 @@ public class ShopAdminScreen extends Screen {
         pickerSearchField.setFocused(true);
     }
 
+    /**
+     * Filtra el selector. Prefijos especiales:
+     *   @mod   → por namespace (ej. "@create", "@cretania").
+     *   #tag   → por etiqueta   (ej. "#planks", "#minecraft:logs").
+     * Sin prefijo: por nombre o id de registro (subcadena).
+     */
     private void filterItems(String query) {
         filteredItems.clear();
         pickerScrollOffset = 0;
-        if (query == null || query.isEmpty()) {
+        String q = (query == null) ? "" : query.trim().toLowerCase(java.util.Locale.ROOT);
+        if (q.isEmpty()) {
             filteredItems.addAll(allItems);
-        } else {
-            String lower = query.toLowerCase();
+            return;
+        }
+
+        char prefix = q.charAt(0);
+        if (prefix == '@') {
+            String term = q.substring(1).trim();
             for (ItemStack stack : allItems) {
-                String name = stack.getHoverName().getString().toLowerCase();
-                // También busca por id de registro ("minecraft:stone") para
-                // ítems modded cuyo nombre no está traducido.
-                String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-                if (name.contains(lower) || id.contains(lower)) {
-                    filteredItems.add(stack);
-                }
+                String ns = BuiltInRegistries.ITEM.getKey(stack.getItem()).getNamespace();
+                if (term.isEmpty() || ns.contains(term)) filteredItems.add(stack);
             }
+        } else if (prefix == '#') {
+            String term = q.substring(1).trim();
+            for (ItemStack stack : allItems) {
+                if (matchesTag(stack, term)) filteredItems.add(stack);
+            }
+        } else {
+            for (ItemStack stack : allItems) {
+                String name = stack.getHoverName().getString().toLowerCase(java.util.Locale.ROOT);
+                // También por id de registro ("minecraft:stone") para ítems
+                // modded cuyo nombre no está traducido.
+                String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+                if (name.contains(q) || id.contains(q)) filteredItems.add(stack);
+            }
+        }
+    }
+
+    /** ¿El ítem tiene una etiqueta cuyo id/ruta contiene {@code term}? */
+    private static boolean matchesTag(ItemStack stack, String term) {
+        try {
+            if (term.isEmpty()) return stack.getTags().findAny().isPresent();
+            return stack.getTags().anyMatch(t ->
+                    t.location().toString().contains(term) || t.location().getPath().contains(term));
+        } catch (Throwable t) {
+            return false;
         }
     }
 
@@ -347,6 +392,18 @@ public class ShopAdminScreen extends Screen {
 
         drawAccentBar(g, leftX, topY, GUI_WIDTH, 20);
         g.drawCenteredString(font, "★ Administración de Tienda ★", leftX + GUI_WIDTH / 2, topY + 6, 0xFFFFFF);
+
+        // Copiar / pegar TIENDA COMPLETA
+        copyShopBtn.draw(g, font, mouseX, mouseY);
+        if (copyShopBtn.isMouseOver(mouseX, mouseY)) {
+            setTooltip("Copiar toda la tienda (productos, precios y stock)", mouseX, mouseY);
+        }
+        if (shopClipboard != null) {
+            pasteShopBtn.draw(g, font, mouseX, mouseY);
+            if (pasteShopBtn.isMouseOver(mouseX, mouseY)) {
+                setTooltip("Pegar la tienda copiada aquí (reemplaza todos los slots)", mouseX, mouseY);
+            }
+        }
 
         drawSectionHeader(g, leftX + 12, topY + 25, "▾ Estante Izquierdo");
         drawSectionHeader(g, leftX + 12, topY + 135, "▾ Estante Derecho");
@@ -764,6 +821,10 @@ public class ShopAdminScreen extends Screen {
         g.drawCenteredString(font, pickerTitle, pickerX + PICKER_WIDTH / 2, pickerY + 5, 0xFFFFFF);
 
         pickerSearchField.draw(g, font);
+        // Pista de sintaxis cuando el buscador está vacío
+        if (pickerSearchField.getValue().isEmpty()) {
+            g.drawString(font, "Buscar…   §8@mod  #tag", pickerX + 13, pickerY + 25, COL_TEXT_DIM, false);
+        }
 
         int gridX = pickerX + 10;
         int gridY = pickerY + 42;
@@ -831,6 +892,10 @@ public class ShopAdminScreen extends Screen {
         if (currentMode != Mode.NORMAL) {
             return handlePickerClick(mouseX, mouseY);
         }
+
+        // Copiar / pegar tienda completa (barra de título)
+        if (copyShopBtn.mouseClicked(mouseX, mouseY)) return true;
+        if (shopClipboard != null && pasteShopBtn.mouseClicked(mouseX, mouseY)) return true;
 
         if (selectedSlot >= 0) {
             if (cfgType == null) {
@@ -1165,6 +1230,35 @@ public class ShopAdminScreen extends Screen {
         if (slot != null) slot.clear();
         loadConfigFromSlot(selectedSlot); // vuelve a los botones Venta/Compra
         unfocusAllFields();
+    }
+
+    // ── Copiar / pegar TIENDA COMPLETA ────────────────────────────────────────
+
+    /** Copia la configuración de los 24 slots al portapapeles de tienda. */
+    private void copyShop() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level == null) return;
+        shopClipboard = shopBE.saveTemplate(mc.level.registryAccess());
+        if (mc.player != null) {
+            mc.player.displayClientMessage(Component.literal(
+                    "§a[Tienda] Configuración copiada (productos, precios y stock)."), true);
+        }
+    }
+
+    /** Aplica la plantilla copiada a ESTA tienda (reemplaza todos los slots). */
+    private void pasteShop() {
+        Minecraft mc = Minecraft.getInstance();
+        if (shopClipboard == null || mc.level == null) return;
+        ModNetworking.sendApplyShopTemplate(shopPos, shopClipboard);
+        // Feedback inmediato en el cliente
+        shopBE.applyTemplate(mc.level.registryAccess(), shopClipboard);
+        selectedSlot = -1;
+        cfgType = null;
+        unfocusAllFields();
+        if (mc.player != null) {
+            mc.player.displayClientMessage(Component.literal(
+                    "§a[Tienda] Configuración pegada en esta tienda."), true);
+        }
     }
 
     // ── Copiar / pegar (portapapeles de slot) ─────────────────────────────────

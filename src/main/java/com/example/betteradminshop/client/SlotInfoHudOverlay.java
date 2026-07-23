@@ -55,6 +55,7 @@ public class SlotInfoHudOverlay implements LayeredDraw.Layer {
     public void render(GuiGraphics gui, DeltaTracker delta) {
         Minecraft mc = Minecraft.getInstance();
         if (mc.level == null || mc.player == null) return;
+        if (mc.player.isSpectator()) return; // oculto en modo espectador (cinemáticas)
         if (mc.screen != null) return; // ocultar cuando hay una pantalla abierta
         if (mc.hitResult == null || mc.hitResult.getType() != HitResult.Type.BLOCK) return;
 

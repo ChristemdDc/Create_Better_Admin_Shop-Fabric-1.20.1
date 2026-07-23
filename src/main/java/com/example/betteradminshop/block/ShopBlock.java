@@ -3,6 +3,8 @@ package com.example.betteradminshop.block;
 import com.example.betteradminshop.client.ShopAdminScreen;
 import com.example.betteradminshop.registry.ModSounds;
 import com.simibubi.create.AllItems;
+import com.simibubi.create.content.equipment.wrench.IWrenchable;
+import net.minecraft.world.item.context.UseOnContext;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -46,7 +48,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-public class ShopBlock extends BaseEntityBlock {
+public class ShopBlock extends BaseEntityBlock implements IWrenchable {
 
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
     public static final EnumProperty<ShopPart> PART = EnumProperty.create("part", ShopPart.class);
@@ -153,6 +155,11 @@ public class ShopBlock extends BaseEntityBlock {
                 BlockPos partPos = pos.offset(parts[i].getOffsetFromOrigin(facing));
                 level.setBlock(partPos, state.setValue(PART, parts[i]), 3);
             }
+            // Fijar la orientación real: a partir de aquí es inmutable y
+            // cualquier edición externa del blockstate se revierte.
+            if (level.getBlockEntity(pos) instanceof ShopBlockEntity be) {
+                be.setLockedFacing(facing);
+            }
         }
     }
 
@@ -173,14 +180,87 @@ public class ShopBlock extends BaseEntityBlock {
         return state.getValue(PART) == ShopPart.ORIGIN ? RenderShape.MODEL : RenderShape.INVISIBLE;
     }
 
+    // ── Bloque inamovible ────────────────────────────────────────────────────
+    // No rotar ni reflejar tras la colocación: la tienda es un multibloque cuyo
+    // render, detección de clics y stock por jugador dependen de un FACING
+    // consistente. Herramientas de rotación (llave de Create, WorldEdit,
+    // bloques de estructura, etc.) usan rotate()/mirror(): al ignorarlas, el
+    // bloque no puede desajustarse. La orientación se fija solo al colocarlo.
+
     @Override
     public BlockState rotate(BlockState state, Rotation rotation) {
-        return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
+        return state;
     }
 
     @Override
     public BlockState mirror(BlockState state, Mirror mirror) {
-        return state.rotate(mirror.getRotation(state.getValue(FACING)));
+        return state;
+    }
+
+    /** No empujable por pistones (vanilla y, en general, mecánicos de Create). */
+    @Override
+    public net.minecraft.world.level.material.PushReaction getPistonPushReaction(BlockState state) {
+        return net.minecraft.world.level.material.PushReaction.BLOCK;
+    }
+
+    // La llave de Create usa IWrenchable: consumimos la acción sin rotar ni
+    // desmontar, para que no pueda desajustar la tienda.
+    @Override
+    public InteractionResult onWrenched(BlockState state, UseOnContext context) {
+        return InteractionResult.SUCCESS;
+    }
+
+    @Override
+    public InteractionResult onSneakWrenched(BlockState state, UseOnContext context) {
+        return InteractionResult.SUCCESS;
+    }
+
+    /**
+     * Última línea de defensa: si CUALQUIER herramienta edita el FACING/PART del
+     * blockstate directamente (editores de propiedades de otros mods, que no
+     * pasan por rotate() ni por IWrenchable), programamos una reparación para el
+     * tick siguiente. La tienda revierte a su orientación bloqueada.
+     */
+    @Override
+    protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
+        super.onPlace(state, level, pos, oldState, movedByPiston);
+        if (level.isClientSide) return;
+        if (!(oldState.getBlock() instanceof ShopBlock)) return; // colocación nueva, no edición
+        if (oldState.getValue(FACING) == state.getValue(FACING)
+                && oldState.getValue(PART) == state.getValue(PART)) return; // sin cambio relevante
+        level.scheduleTick(pos, this, 1);
+    }
+
+    @Override
+    protected void tick(BlockState state, net.minecraft.server.level.ServerLevel level, BlockPos pos,
+                        net.minecraft.util.RandomSource random) {
+        ShopBlockEntity be = findOwningOrigin(level, pos);
+        if (be != null) be.validateStructure();
+    }
+
+    /**
+     * Busca el block entity de la tienda DUEÑA de {@code pos}. No usa
+     * getOriginPos porque el FACING pudo quedar corrupto: escanea el cubo 3x3x3
+     * (la tienda ocupa 2x2, así que su origen siempre cae dentro) y se queda con
+     * la que realmente contiene esa posición.
+     *
+     * El chequeo coversPosition es imprescindible: con tiendas pegadas, el
+     * escaneo puede encontrar primero el origen de una VECINA — repararla a ella
+     * dejaría la editada sin arreglar.
+     */
+    @Nullable
+    private static ShopBlockEntity findOwningOrigin(Level level, BlockPos pos) {
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (level.getBlockEntity(pos.offset(dx, dy, dz)) instanceof ShopBlockEntity be
+                            && be.coversPosition(pos)) {
+                        return be;
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     @Nullable
