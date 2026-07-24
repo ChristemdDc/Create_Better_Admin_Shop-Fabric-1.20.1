@@ -8,7 +8,9 @@ base {
     archivesName = archives_base_name
 }
 
-version = "$mod_version+$minecraft_version"
+// El jar sale como "<archives_base_name>-<version>.jar" → Betteradminshop-0.1.1.jar
+// Subir mod_version en gradle.properties con cada cambio publicado.
+version = "$mod_version"
 group = project.maven_group
 
 java {

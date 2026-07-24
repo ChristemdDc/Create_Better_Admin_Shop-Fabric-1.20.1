@@ -84,7 +84,22 @@ public final class AdminShopCommand {
                                 }))
                         // ── Restock global (todas las tiendas, todos los jugadores) ─
                         .then(Commands.literal("restock")
-                                .executes(ctx -> globalRestock(ctx.getSource())))
+                                .executes(ctx -> globalRestock(ctx.getSource()))
+                                // Restock INDIVIDUAL: solo ese jugador; el resto sigue su curso.
+                                .then(Commands.literal("jugador")
+                                        .then(Commands.argument("jugador",
+                                                        net.minecraft.commands.arguments.GameProfileArgument.gameProfile())
+                                                .executes(ctx -> restockPlayers(ctx.getSource(),
+                                                        net.minecraft.commands.arguments.GameProfileArgument
+                                                                .getGameProfiles(ctx, "jugador")))))
+                                // Tiempo del ciclo de stock por jugador (global).
+                                .then(Commands.literal("tiempo")
+                                        .executes(ctx -> showResetTime(ctx.getSource()))
+                                        .then(Commands.argument("horas",
+                                                        com.mojang.brigadier.arguments.DoubleArgumentType.doubleArg(0.0))
+                                                .executes(ctx -> setResetTime(ctx.getSource(),
+                                                        com.mojang.brigadier.arguments.DoubleArgumentType
+                                                                .getDouble(ctx, "horas"))))))
                         // ── Ítems dinámicos del selector de la tienda ──────────────
                         .then(Commands.literal("items")
                                 // Añade un ítem (con componentes/NBT) a la lista del selector.
@@ -149,6 +164,76 @@ public final class AdminShopCommand {
 
         src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Restock global aplicado a "
                 + shops + " tiendas cargadas. §7(las descargadas se reabastecen al cargarse)"), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /**
+     * Reinicia el stock de uno o varios jugadores concretos. El stock del resto
+     * sigue su curso normal (no se toca su ciclo).
+     */
+    private static int restockPlayers(CommandSourceStack src,
+                                      java.util.Collection<com.mojang.authlib.GameProfile> profiles) {
+        MinecraftServer server = src.getServer();
+        if (server == null || profiles.isEmpty()) return 0;
+
+        long now = System.currentTimeMillis();
+        com.example.betteradminshop.data.GlobalRestockData data =
+                com.example.betteradminshop.data.GlobalRestockData.get(server);
+
+        int shops = 0;
+        StringBuilder names = new StringBuilder();
+        for (com.mojang.authlib.GameProfile profile : profiles) {
+            // Registrarlo también en el estado global: las tiendas en chunks
+            // descargados lo aplicarán al cargarse.
+            data.setPlayerRestock(profile.getId(), now);
+            shops = com.example.betteradminshop.block.ShopBlockEntity
+                    .restockPlayerAllLoaded(profile.getId(), now);
+
+            if (names.length() > 0) names.append(", ");
+            names.append(profile.getName());
+
+            ServerPlayer target = server.getPlayerList().getPlayer(profile.getId());
+            if (target != null) {
+                target.connection.send(new ClientboundSetTitlesAnimationPacket(10, 70, 20));
+                target.connection.send(new ClientboundSetSubtitleTextPacket(
+                        Component.literal("§7Tu stock se restableció en las tiendas")));
+                target.connection.send(new ClientboundSetTitleTextPacket(
+                        Component.literal("§a§l✦ Stock Restablecido ✦")));
+                target.sendSystemMessage(Component.literal(
+                        "§a[Tienda] §fTu stock ha sido restablecido."));
+                target.playNotifySound(SoundEvents.PLAYER_LEVELUP, SoundSource.MASTER, 0.6f, 1.4f);
+            }
+        }
+
+        final int shopCount = shops;
+        final String who = names.toString();
+        src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Stock restablecido para §f" + who
+                + " §7en " + shopCount + " tiendas cargadas. "
+                + "(las descargadas lo aplican al cargarse; el resto de jugadores no se ve afectado)"), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Muestra el tiempo actual del ciclo de stock por jugador. */
+    private static int showResetTime(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+        long ms = com.example.betteradminshop.data.GlobalRestockData.get(server).getResetDurationMs();
+        src.sendSuccess(() -> Component.literal("§7[BetterAdminShop] El stock de cada jugador se reinicia "
+                + "§f" + com.example.betteradminshop.block.ShopBlock.formatDuration(ms / 1000)
+                + " §7después de su primera compra."), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Fija (global) el tiempo del ciclo de stock por jugador. */
+    private static int setResetTime(CommandSourceStack src, double hours) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+        long ms = (long) (hours * 3600_000.0);
+        com.example.betteradminshop.data.GlobalRestockData.get(server).setResetDurationMs(ms);
+        String pretty = com.example.betteradminshop.block.ShopBlock.formatDuration(ms / 1000);
+        src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Tiempo de reseteo de stock: §f" + pretty
+                + " §7· se aplica a los ciclos que empiecen desde ahora "
+                + "(usa §f/tiendas restock§7 para aplicarlo a todos ya)."), true);
         return Command.SINGLE_SUCCESS;
     }
 

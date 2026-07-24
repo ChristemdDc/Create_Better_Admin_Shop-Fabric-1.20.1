@@ -15,8 +15,12 @@ import java.util.UUID;
 public class ShopSlot {
     public static final int INFINITE_STOCK = -1;
 
-    /** Tiempo de reabastecimiento por jugador: 24 horas. */
-    public static final long STOCK_RESET_MS = 24L * 60L * 60L * 1000L;
+    /**
+     * Tiempo de reabastecimiento por jugador POR DEFECTO: 24 horas.
+     * El valor efectivo es global y configurable en juego
+     * ({@code /tiendas restock tiempo &lt;horas&gt;}), guardado en GlobalRestockData.
+     */
+    public static final long DEFAULT_STOCK_RESET_MS = 24L * 60L * 60L * 1000L;
 
     /**
      * Tipo de slot.
@@ -86,16 +90,22 @@ public class ShopSlot {
 
     /**
      * Descuenta stock del jugador (servidor). Si venció su temporizador, primero
-     * reinicia; si agota su cupo, arranca el temporizador de 24h.
+     * reinicia el ciclo.
+     *
+     * El temporizador arranca en la PRIMERA compra del ciclo — no al agotar el
+     * stock. Si arrancara al agotarse, un jugador que nunca vacía su cupo no
+     * vería reponerse el stock jamás.
+     *
+     * @param resetDurationMs duración del ciclo (global, configurable por comando)
      */
-    public void consume(UUID player, int bundles, long now) {
+    public void consume(UUID player, int bundles, long now, long resetDurationMs) {
         if (hasInfiniteStock()) return;
         maybeReset(player, now);
+        if (!resetAt.containsKey(player)) {
+            resetAt.put(player, now + Math.max(0L, resetDurationMs));
+        }
         int used = consumed.getOrDefault(player, 0) + bundles * sellAmount;
         consumed.put(player, used);
-        if (used >= maxStock) {
-            resetAt.put(player, now + STOCK_RESET_MS);
-        }
     }
 
     private void maybeReset(UUID player, long now) {
@@ -126,6 +136,12 @@ public class ShopSlot {
     public void restock() {
         consumed.clear();
         resetAt.clear();
+    }
+
+    /** Reinicia el stock de UN solo jugador; el de los demás sigue su curso. */
+    public void restockPlayer(UUID player) {
+        consumed.remove(player);
+        resetAt.remove(player);
     }
 
     /** Elimina entradas de jugadores cuyo ciclo de 24h ya venció (limpieza). */

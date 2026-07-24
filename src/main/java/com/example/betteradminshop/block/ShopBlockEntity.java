@@ -51,6 +51,9 @@ public class ShopBlockEntity extends BlockEntity {
     /** Momento (ms) hasta el que esta tienda ya aplicó el restock global. */
     private long lastGlobalRestockMs = 0L;
 
+    /** Restocks INDIVIDUALES ya aplicados por esta tienda (jugador → instante). */
+    private final Map<UUID, Long> appliedPlayerRestocks = new HashMap<>();
+
     /**
      * Orientación real de esta tienda, fijada al colocarla. Es la fuente de
      * verdad: si alguna herramienta externa edita el FACING/PART del blockstate
@@ -188,9 +191,10 @@ public class ShopBlockEntity extends BlockEntity {
 
         // Descontar stock de cada slot para ESTE jugador (por jugador)
         long nowStock = System.currentTimeMillis();
+        long resetDuration = stockResetDurationMs();
         for (Map.Entry<Integer, Integer> entry : order.getItems().entrySet()) {
             ShopSlot slot = slots[entry.getKey()];
-            if (!slot.isEmpty()) slot.consume(playerId, entry.getValue(), nowStock);
+            if (!slot.isEmpty()) slot.consume(playerId, entry.getValue(), nowStock, resetDuration);
         }
 
         DeliveryEntry newEntry = new DeliveryEntry(deliveredItems, player.getUUID(),
@@ -293,6 +297,14 @@ public class ShopBlockEntity extends BlockEntity {
 
     public static int loadedShopCount() {
         return LOADED.size();
+    }
+
+    /** Duración global del ciclo de stock por jugador (configurable por comando). */
+    private long stockResetDurationMs() {
+        if (level instanceof ServerLevel serverLevel && serverLevel.getServer() != null) {
+            return GlobalRestockData.get(serverLevel.getServer()).getResetDurationMs();
+        }
+        return ShopSlot.DEFAULT_STOCK_RESET_MS;
     }
 
     /** Resumen de precio/pago de un slot para la fila del registro. */
@@ -548,18 +560,57 @@ public class ShopBlockEntity extends BlockEntity {
         publishState();
     }
 
+    /** Reinicia el stock de UN jugador en esta tienda (los demás siguen igual). */
+    public void applyPlayerRestock(UUID playerId, long timestamp) {
+        for (ShopSlot slot : slots) {
+            slot.restockPlayer(playerId);
+        }
+        appliedPlayerRestocks.put(playerId, timestamp);
+        setChanged();
+        syncToClient();
+        publishState();
+    }
+
+    /** Reinicia el stock de un jugador en todas las tiendas cargadas. Devuelve cuántas. */
+    public static int restockPlayerAllLoaded(UUID playerId, long timestamp) {
+        int n = 0;
+        for (ShopBlockEntity be : LOADED) {
+            be.applyPlayerRestock(playerId, timestamp);
+            n++;
+        }
+        return n;
+    }
+
     /**
-     * Si hubo un restock global mientras esta tienda estaba descargada, lo
-     * aplica ahora (al cargarse). Llamado desde {@link #clearRemoved()}.
+     * Aplica los restocks (global e individuales) que hayan ocurrido mientras
+     * esta tienda estaba descargada. Llamado desde {@link #clearRemoved()}.
      */
     private void catchUpGlobalRestock() {
-        if (!(level instanceof ServerLevel serverLevel)) return;
-        long global = GlobalRestockData.get(serverLevel.getServer()).getTimestamp();
+        if (!(level instanceof ServerLevel serverLevel) || serverLevel.getServer() == null) return;
+        GlobalRestockData data = GlobalRestockData.get(serverLevel.getServer());
+        boolean changed = false;
+
+        long global = data.getTimestamp();
         if (global > lastGlobalRestockMs) {
             for (ShopSlot slot : slots) {
                 slot.restock();
             }
             lastGlobalRestockMs = global;
+            changed = true;
+        }
+
+        // Restocks individuales pendientes (reaplicarlos es idempotente).
+        for (var e : data.getPlayerRestocks().entrySet()) {
+            if (e.getValue() > appliedPlayerRestocks.getOrDefault(e.getKey(), 0L)) {
+                for (ShopSlot slot : slots) {
+                    slot.restockPlayer(e.getKey());
+                }
+                appliedPlayerRestocks.put(e.getKey(), e.getValue());
+                changed = true;
+            }
+        }
+
+        if (changed) {
             setChanged();
             syncToClient();
         }
@@ -747,6 +798,15 @@ public class ShopBlockEntity extends BlockEntity {
         if (lockedFacing != null) {
             tag.putString("LockedFacing", lockedFacing.getSerializedName());
         }
+
+        ListTag appliedList = new ListTag();
+        for (var e : appliedPlayerRestocks.entrySet()) {
+            CompoundTag c = new CompoundTag();
+            c.putUUID("UUID", e.getKey());
+            c.putLong("At", e.getValue());
+            appliedList.add(c);
+        }
+        tag.put("AppliedPlayerRestocks", appliedList);
     }
 
     @Override
@@ -784,6 +844,15 @@ public class ShopBlockEntity extends BlockEntity {
         lastGlobalRestockMs = tag.getLong("LastGlobalRestock");
         lockedFacing = tag.contains("LockedFacing")
                 ? Direction.byName(tag.getString("LockedFacing")) : null;
+
+        appliedPlayerRestocks.clear();
+        if (tag.contains("AppliedPlayerRestocks")) {
+            ListTag appliedList = tag.getList("AppliedPlayerRestocks", Tag.TAG_COMPOUND);
+            for (int i = 0; i < appliedList.size(); i++) {
+                CompoundTag c = appliedList.getCompound(i);
+                if (c.hasUUID("UUID")) appliedPlayerRestocks.put(c.getUUID("UUID"), c.getLong("At"));
+            }
+        }
     }
 
     @Override
