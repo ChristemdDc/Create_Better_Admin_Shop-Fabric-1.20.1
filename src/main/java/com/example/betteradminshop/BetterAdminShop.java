@@ -34,6 +34,9 @@ public class BetterAdminShop {
         // Register network payloads
         modBus.addListener(ModNetworking::register);
 
+        // Capabilities de ítems (chutes de import/export de la tienda de jugador)
+        modBus.addListener(com.example.betteradminshop.registry.ModCapabilities::register);
+
         // Config común (incluye la integración opcional con MongoDB)
         modContainer.registerConfig(ModConfig.Type.COMMON, BetterAdminShopConfig.SPEC);
 

@@ -27,6 +27,8 @@ public final class BetterAdminShopClient {
     public static void onRegisterRenderers(EntityRenderersEvent.RegisterRenderers event) {
         event.registerBlockEntityRenderer(ModBlockEntities.SHOP_BLOCK_ENTITY.get(),
                 ShopBlockEntityRenderer::new);
+        event.registerBlockEntityRenderer(ModBlockEntities.PLAYER_SHOP_BLOCK_ENTITY.get(),
+                com.example.betteradminshop.client.PlayerShopRenderer::new);
         BetterAdminShop.LOGGER.info("{} client initialized.", BetterAdminShop.NAME);
     }
 
@@ -38,6 +40,9 @@ public final class BetterAdminShopClient {
         event.registerAboveAll(
                 ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "slot_info_hud"),
                 new SlotInfoHudOverlay());
+        event.registerAboveAll(
+                ResourceLocation.fromNamespaceAndPath(BetterAdminShop.ID, "player_shop_hud"),
+                new com.example.betteradminshop.client.PlayerShopHudOverlay());
     }
 
     @SubscribeEvent

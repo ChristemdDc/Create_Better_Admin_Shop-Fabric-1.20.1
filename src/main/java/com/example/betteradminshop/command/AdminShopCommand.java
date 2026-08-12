@@ -100,6 +100,40 @@ public final class AdminShopCommand {
                                                 .executes(ctx -> setResetTime(ctx.getSource(),
                                                         com.mojang.brigadier.arguments.DoubleArgumentType
                                                                 .getDouble(ctx, "horas"))))))
+                        // ── Fondo común de rentas (solo administración) ────────────
+                        .then(Commands.literal("fondo")
+                                .executes(ctx -> showFund(ctx.getSource()))
+                                .then(Commands.literal("retirar")
+                                        .executes(ctx -> {
+                                            if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+                                                ctx.getSource().sendFailure(Component.literal("Solo jugadores pueden retirar el fondo."));
+                                                return 0;
+                                            }
+                                            return withdrawFund(player);
+                                        })))
+                        // ── Panel visual de configuración (tiendas de jugador) ─────
+                        .then(Commands.literal("config")
+                                .executes(ctx -> {
+                                    if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+                                        ctx.getSource().sendFailure(Component.literal("Solo jugadores pueden abrir el panel."));
+                                        return 0;
+                                    }
+                                    return openShopConfig(player);
+                                }))
+                        // ── Renta de las tiendas de JUGADOR (cuota global) ─────────
+                        .then(Commands.literal("renta")
+                                .executes(ctx -> showRent(ctx.getSource()))
+                                .then(Commands.literal("off")
+                                        .executes(ctx -> disableRent(ctx.getSource())))
+                                .then(Commands.argument("item", ItemArgument.item(event.getBuildContext()))
+                                        .then(Commands.argument("cantidad",
+                                                        com.mojang.brigadier.arguments.IntegerArgumentType.integer(1))
+                                                .then(Commands.argument("dias",
+                                                                com.mojang.brigadier.arguments.DoubleArgumentType.doubleArg(0.01))
+                                                        .executes(ctx -> setRent(ctx.getSource(),
+                                                                ItemArgument.getItem(ctx, "item").createItemStack(1, false),
+                                                                com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "cantidad"),
+                                                                com.mojang.brigadier.arguments.DoubleArgumentType.getDouble(ctx, "dias")))))))
                         // ── Ítems dinámicos del selector de la tienda ──────────────
                         .then(Commands.literal("items")
                                 // Añade un ítem (con componentes/NBT) a la lista del selector.
@@ -210,6 +244,107 @@ public final class AdminShopCommand {
         src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Stock restablecido para §f" + who
                 + " §7en " + shopCount + " tiendas cargadas. "
                 + "(las descargadas lo aplican al cargarse; el resto de jugadores no se ve afectado)"), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    /** Abre el panel visual de configuración de tiendas de jugador (Fase 5). */
+    private static int openShopConfig(ServerPlayer player) {
+        var settings = com.example.betteradminshop.data.PlayerShopSettings.get(player.server);
+        java.util.List<net.minecraft.world.item.ItemStack> items = new java.util.ArrayList<>();
+        java.util.List<Integer> amounts = new java.util.ArrayList<>();
+        for (String key : com.example.betteradminshop.data.PlayerShopSettings.UPGRADE_KEYS) {
+            var cost = settings.getUpgradeCost(key);
+            items.add(cost.item());
+            amounts.add(cost.amount());
+        }
+        PacketDistributor.sendToPlayer(player,
+                new com.example.betteradminshop.network.PlayerShopNetworking.ShopConfig(
+                        settings.getRentItem(), settings.getRentAmount(), settings.getRentPeriodMs(),
+                        items, amounts));
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ── Fondo común de rentas ──────────────────────────────────────────────────
+
+    private static int showFund(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+        var fund = com.example.betteradminshop.data.RentFund.get(server);
+        if (fund.isEmpty()) {
+            src.sendSuccess(() -> Component.literal(
+                    "§7[BetterAdminShop] El fondo común de rentas está §evacío§7."), false);
+            return Command.SINGLE_SUCCESS;
+        }
+        src.sendSuccess(() -> Component.literal("§6[BetterAdminShop] Fondo común de rentas:"), false);
+        for (var entry : fund.view()) {
+            src.sendSuccess(() -> Component.literal("  §f" + entry.count() + "× "
+                    + entry.proto().getHoverName().getString()), false);
+        }
+        src.sendSuccess(() -> Component.literal(
+                "§8Retira todo con /tiendas fondo retirar"), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int withdrawFund(ServerPlayer player) {
+        var fund = com.example.betteradminshop.data.RentFund.get(player.server);
+        if (fund.isEmpty()) {
+            player.displayClientMessage(Component.literal(
+                    "§e[BetterAdminShop] El fondo está vacío."), true);
+            return 0;
+        }
+        var stacks = fund.withdrawAll();
+        int total = 0;
+        for (var stack : stacks) {
+            total += stack.getCount();
+            if (!player.getInventory().add(stack)) {
+                player.drop(stack, false); // inventario lleno → al suelo
+            }
+        }
+        final int totalItems = total;
+        player.displayClientMessage(Component.literal(
+                "§a[BetterAdminShop] Fondo retirado: §f" + totalItems + " ítems§a."), false);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    // ── Renta de tiendas de jugador ────────────────────────────────────────────
+
+    private static int showRent(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+        var s = com.example.betteradminshop.data.PlayerShopSettings.get(server);
+        if (!s.isRentConfigured()) {
+            src.sendSuccess(() -> Component.literal("§7[BetterAdminShop] Renta §cdeshabilitada§7 — "
+                    + "las tiendas de jugador operan gratis. Configura con "
+                    + "§f/tiendas renta <item> <cantidad> <días>"), false);
+        } else {
+            String days = String.format("%.1f", s.getRentPeriodMs() / 86_400_000.0);
+            src.sendSuccess(() -> Component.literal("§7[BetterAdminShop] Renta: §f"
+                    + s.getRentAmount() + "× " + s.getRentItem().getHoverName().getString()
+                    + " §7cada §f" + days + " días§7."), false);
+        }
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int setRent(CommandSourceStack src, ItemStack item, int amount, double days) {
+        MinecraftServer server = src.getServer();
+        if (server == null || item.isEmpty()) return 0;
+        long periodMs = (long) (days * 86_400_000.0);
+        com.example.betteradminshop.data.PlayerShopSettings.get(server).setRent(item, amount, periodMs);
+        com.example.betteradminshop.block.PlayerShopBlockEntity.resyncAllLoaded();
+        String daysStr = String.format("%.1f", days);
+        src.sendSuccess(() -> Component.literal("§a[BetterAdminShop] Renta configurada: §f"
+                + amount + "× " + item.getHoverName().getString() + " §7cada §f" + daysStr
+                + " días§7. Las tiendas sin renta al día quedan cerradas."), true);
+        return Command.SINGLE_SUCCESS;
+    }
+
+    private static int disableRent(CommandSourceStack src) {
+        MinecraftServer server = src.getServer();
+        if (server == null) return 0;
+        com.example.betteradminshop.data.PlayerShopSettings.get(server).disableRent();
+        com.example.betteradminshop.block.PlayerShopBlockEntity.resyncAllLoaded();
+        src.sendSuccess(() -> Component.literal(
+                "§a[BetterAdminShop] Renta deshabilitada: las tiendas de jugador operan gratis."), true);
         return Command.SINGLE_SUCCESS;
     }
 

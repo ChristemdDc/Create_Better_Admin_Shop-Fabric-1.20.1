@@ -1,6 +1,7 @@
 package com.example.betteradminshop.registry;
 
 import com.example.betteradminshop.BetterAdminShop;
+import com.example.betteradminshop.block.PlayerShopBlockEntity;
 import com.example.betteradminshop.block.ShopBlockEntity;
 
 import net.minecraft.core.registries.Registries;
@@ -19,6 +20,12 @@ public final class ModBlockEntities {
             BLOCK_ENTITIES.register("shop_block_entity",
                     () -> BlockEntityType.Builder
                             .of(ShopBlockEntity::new, ModBlocks.SHOP_BLOCK.get())
+                            .build(null));
+
+    public static final Supplier<BlockEntityType<PlayerShopBlockEntity>> PLAYER_SHOP_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("player_shop_block_entity",
+                    () -> BlockEntityType.Builder
+                            .of(PlayerShopBlockEntity::new, ModBlocks.PLAYER_SHOP.get())
                             .build(null));
 
     public static void register(IEventBus modBus) {

@@ -155,6 +155,9 @@ public final class ModNetworking {
         r.playToClient(RecordsDataPayload.TYPE,    RecordsDataPayload.STREAM_CODEC,
                 (msg, ctx) -> com.example.betteradminshop.client.ClientPayloadHandler.handleRecordsData(msg, ctx));
 
+        // Menú de la tienda de jugador (Fase 4)
+        PlayerShopNetworking.register(r);
+
         // Ítems dinámicos auxiliares
         r.playToServer(RequestDynamicItemsPayload.TYPE, RequestDynamicItemsPayload.STREAM_CODEC,
                 ModNetworking::handleRequestDynamicItems);

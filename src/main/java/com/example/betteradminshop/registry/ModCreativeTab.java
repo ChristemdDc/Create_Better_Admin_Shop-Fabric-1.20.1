@@ -20,7 +20,10 @@ public final class ModCreativeTab {
             () -> CreativeModeTab.builder()
                     .title(Component.literal(BetterAdminShop.NAME))
                     .icon(() -> new ItemStack(ModBlocks.SHOP_BLOCK_ITEM.get()))
-                    .displayItems((params, output) -> output.accept(ModBlocks.SHOP_BLOCK_ITEM.get()))
+                    .displayItems((params, output) -> {
+                        output.accept(ModBlocks.SHOP_BLOCK_ITEM.get());
+                        output.accept(ModBlocks.PLAYER_SHOP_ITEM.get());
+                    })
                     .build());
 
     public static void register(IEventBus modBus) {

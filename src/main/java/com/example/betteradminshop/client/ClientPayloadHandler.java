@@ -42,4 +42,15 @@ public final class ClientPayloadHandler {
             }
         });
     }
+
+    /** Runs client-side — abre el panel de configuración de tiendas de jugador. */
+    public static void handleShopConfig(
+            com.example.betteradminshop.network.PlayerShopNetworking.ShopConfig msg, IPayloadContext ctx) {
+        ctx.enqueueWork(() -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null) {
+                mc.setScreen(new PlayerShopConfigScreen(msg));
+            }
+        });
+    }
 }

@@ -1,6 +1,7 @@
 package com.example.betteradminshop.registry;
 
 import com.example.betteradminshop.BetterAdminShop;
+import com.example.betteradminshop.block.PlayerShopBlock;
 import com.example.betteradminshop.block.ShopBlock;
 
 import net.minecraft.world.item.BlockItem;
@@ -30,6 +31,16 @@ public final class ModBlocks {
 
     public static final Supplier<BlockItem> SHOP_BLOCK_ITEM = ITEMS.register("shop_block",
             () -> new BlockItem(SHOP_BLOCK.get(), new Item.Properties()));
+
+    public static final Supplier<PlayerShopBlock> PLAYER_SHOP = BLOCKS.register("player_shop",
+            () -> new PlayerShopBlock(BlockBehaviour.Properties.of()
+                    .mapColor(MapColor.WOOD)
+                    .strength(2.5f)
+                    .sound(SoundType.WOOD)
+                    .noOcclusion()));
+
+    public static final Supplier<BlockItem> PLAYER_SHOP_ITEM = ITEMS.register("player_shop",
+            () -> new BlockItem(PLAYER_SHOP.get(), new Item.Properties()));
 
     public static void register(IEventBus modBus) {
         BLOCKS.register(modBus);
