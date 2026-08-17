@@ -18,6 +18,11 @@ public class PlayerShopSlot {
     private ItemStack saleItem = ItemStack.EMPTY;
     private ItemStack priceItem = ItemStack.EMPTY;
     private int priceAmount = 1;
+    /**
+     * Giro HORIZONTAL del ítem sobre el mostrador, en pasos de 90° (0-3).
+     * Permite orientar la cara delantera del producto hacia el comprador.
+     */
+    private int rotation = 0;
 
     public boolean isEmpty() {
         return saleItem.isEmpty();
@@ -34,10 +39,17 @@ public class PlayerShopSlot {
     public int getPriceAmount() { return priceAmount; }
     public void setPriceAmount(int amount) { this.priceAmount = Math.max(1, amount); }
 
+    /** Pasos de 90° (0-3). */
+    public int getRotation() { return rotation; }
+    public void setRotation(int steps) { this.rotation = ((steps % 4) + 4) % 4; }
+    /** Avanza un cuarto de vuelta. */
+    public void rotate() { setRotation(rotation + 1); }
+
     public void clear() {
         saleItem = ItemStack.EMPTY;
         priceItem = ItemStack.EMPTY;
         priceAmount = 1;
+        rotation = 0;
     }
 
     public CompoundTag save(HolderLookup.Provider provider) {
@@ -45,6 +57,7 @@ public class PlayerShopSlot {
         if (!saleItem.isEmpty()) tag.put("SaleItem", saleItem.save(provider));
         if (!priceItem.isEmpty()) tag.put("PriceItem", priceItem.save(provider));
         tag.putInt("PriceAmount", priceAmount);
+        tag.putInt("Rotation", rotation);
         return tag;
     }
 
@@ -52,6 +65,7 @@ public class PlayerShopSlot {
         saleItem = loadStack(provider, tag, "SaleItem");
         priceItem = loadStack(provider, tag, "PriceItem");
         priceAmount = Math.max(1, tag.getInt("PriceAmount"));
+        setRotation(tag.getInt("Rotation"));
     }
 
     private static ItemStack loadStack(HolderLookup.Provider provider, CompoundTag tag, String key) {

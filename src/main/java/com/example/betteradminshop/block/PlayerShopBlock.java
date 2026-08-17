@@ -151,16 +151,30 @@ public class PlayerShopBlock extends BaseEntityBlock implements IWrenchable {
     public void setPlacedBy(Level level, BlockPos pos, BlockState state, @Nullable LivingEntity placer, ItemStack stack) {
         if (!level.isClientSide) {
             Direction facing = state.getValue(FACING);
+            BlockState placedState = state;
+
+            // Vanilla ya aplicó BLOCK_ENTITY_DATA del ítem antes de este punto,
+            // así que el BE puede venir con una tienda entera dentro.
+            if (level.getBlockEntity(pos) instanceof PlayerShopBlockEntity be) {
+                be.setLockedFacing(facing);
+                // Solo asignar dueño si la tienda es nueva: al recolocar una
+                // tienda guardada, su dueño original se conserva.
+                if (be.getOwnerId() == null && placer instanceof Player player) {
+                    be.setOwner(player.getUUID(), player.getName().getString());
+                }
+                // Restaurar las mejoras de estante (viven en el blockstate)
+                int lt = be.getStoredLeftTier();
+                int rt = be.getStoredRightTier();
+                if (lt != state.getValue(LEFT_TIER) || rt != state.getValue(RIGHT_TIER)) {
+                    placedState = state.setValue(LEFT_TIER, lt).setValue(RIGHT_TIER, rt);
+                    level.setBlock(pos, placedState, 3);
+                }
+            }
+
             ShopPart[] parts = ShopPart.values();
             for (int i = 1; i < parts.length; i++) { // skip ORIGIN
                 BlockPos partPos = pos.offset(parts[i].getOffsetFromOrigin(facing));
-                level.setBlock(partPos, state.setValue(PART, parts[i]), 3);
-            }
-            if (level.getBlockEntity(pos) instanceof PlayerShopBlockEntity be) {
-                be.setLockedFacing(facing);
-                if (placer instanceof Player player) {
-                    be.setOwner(player.getUUID(), player.getName().getString());
-                }
+                level.setBlock(partPos, placedState.setValue(PART, parts[i]), 3);
             }
         }
     }
@@ -182,6 +196,13 @@ public class PlayerShopBlock extends BaseEntityBlock implements IWrenchable {
             Direction facing = state.getValue(FACING);
             ShopPart part = state.getValue(PART);
             BlockPos originPos = part.getOriginPos(pos, facing);
+
+            // Dropear la tienda CON su contenido (la loot table no dropea nada:
+            // el ítem se construye aquí para poder incluir el block entity).
+            if (!player.isCreative()
+                    && level.getBlockEntity(originPos) instanceof PlayerShopBlockEntity be) {
+                popResource(level, pos, be.createShopItem(level.registryAccess()));
+            }
 
             for (ShopPart p : ShopPart.values()) {
                 BlockPos partPos = originPos.offset(p.getOffsetFromOrigin(facing));

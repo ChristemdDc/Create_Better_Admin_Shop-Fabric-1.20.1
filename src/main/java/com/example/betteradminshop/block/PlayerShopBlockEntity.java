@@ -72,9 +72,13 @@ public class PlayerShopBlockEntity extends BlockEntity {
      */
     public static final float TRAY_Y_OFFSET = 3.2f / 16f;
 
-    /** zonaDePago (asiento del peluche): AABB para el overlay de confirmar compra. */
+    /**
+     * zonaDePago: AABB del overlay de confirmar compra. Arranca en el asiento
+     * (Y 20) y se eleva con el volumen de un peluche sentado, para que el
+     * recuadro se vea como una figura y no como una lámina.
+     */
     public static final float[] PAGO_MIN = {17.5f/16, 20f/16, 20f/16};
-    public static final float[] PAGO_MAX = {23.5f/16, 20.5f/16, 25.3f/16};
+    public static final float[] PAGO_MAX = {23.5f/16, 32f/16, 25.3f/16};
 
     /** Cara frontal de "entregaDeCardboardConCompra": la cardboard gira delante. */
     public static final float[] ENTREGA_MIN = {9.55f/16, 21f/16, 20.55f/16};
@@ -126,6 +130,17 @@ public class PlayerShopBlockEntity extends BlockEntity {
 
     /** Orientación real (inmutable tras colocar); misma defensa que admin. */
     private Direction lockedFacing = null;
+
+    /**
+     * Copia de los tiers de estante. Los tiers viven en el BLOCKSTATE, que se
+     * pierde al romper el bloque; guardarlos aquí permite restaurarlos cuando
+     * la tienda se vuelve a colocar desde su ítem.
+     */
+    private int storedLeftTier = 2;
+    private int storedRightTier = 2;
+
+    public int getStoredLeftTier() { return storedLeftTier; }
+    public int getStoredRightTier() { return storedRightTier; }
 
     /** Tiendas de jugador cargadas (server): para re-sincronizar la config global. */
     private static final java.util.Set<PlayerShopBlockEntity> LOADED =
@@ -478,21 +493,16 @@ public class PlayerShopBlockEntity extends BlockEntity {
         }
         double mdy = lookDir.y;
 
-        // Zona de pago (superficie horizontal): plano Y al centro del asiento
-        float payY = (PAGO_MIN[1] + PAGO_MAX[1]) / 2f;
-        if (Math.abs(mdy) > 1e-6) {
-            double t = (payY - ey) / mdy;
-            if (t > 0) {
-                double ix = mex + mdx * t;
-                double iz = mez + mdz * t;
-                if (ix >= PAGO_MIN[0] && ix <= PAGO_MAX[0] && iz >= PAGO_MIN[2] && iz <= PAGO_MAX[2]) {
-                    return -2;
-                }
-            }
-        }
+        // ── Candidatos, cada uno con su distancia a lo largo del rayo (t) ──
+        // Se elige el MÁS CERCANO: la zona de pago es un volumen alto detrás de
+        // las bandejas, así que sin comparar distancias se "comería" los clics
+        // de las bandejas que quedan delante.
 
-        // Entrega: plano frontal del cubo (Z = cara hacia el mostrador), con
-        // margen para cubrir la cardboard flotando delante.
+        // Zona de pago: intersección con la caja completa (volumen del peluche)
+        double payT = rayBoxDistance(mex, ey, mez, mdx, mdy, mdz, PAGO_MIN, PAGO_MAX);
+
+        // Entrega: plano frontal del cubo, con margen para la cardboard flotante
+        double deliveryT = -1;
         float frontZ = ENTREGA_MIN[2];
         if (Math.abs(mdz) > 1e-6) {
             double t = (frontZ - mez) / mdz;
@@ -501,7 +511,7 @@ public class PlayerShopBlockEntity extends BlockEntity {
                 double iy = ey + mdy * t;
                 if (ix >= ENTREGA_MIN[0] - 0.08 && ix <= ENTREGA_MAX[0] + 0.08
                         && iy >= ENTREGA_MIN[1] - 0.05 && iy <= ENTREGA_MAX[1] + 0.10) {
-                    return -3;
+                    deliveryT = t;
                 }
             }
         }
@@ -511,32 +521,68 @@ public class PlayerShopBlockEntity extends BlockEntity {
 
         int bestSlot = -1;
         double bestDist = Double.MAX_VALUE;
+        double bestSlotT = Double.MAX_VALUE;
         double maxDist = 3.4 / 16.0;
 
         float[][] left = LEFT_TRAYS[getLeftTier() - 2];
         for (int i = 0; i < left.length; i++) {
-            double d = rayToTrayDist(mex, ey, mez, mdx, mdy, mdz, dirDot, left[i]);
-            if (d < bestDist) { bestDist = d; bestSlot = i; }
+            double[] r = rayToTray(mex, ey, mez, mdx, mdy, mdz, dirDot, left[i]);
+            if (r[0] < bestDist) { bestDist = r[0]; bestSlotT = r[1]; bestSlot = i; }
         }
         float[][] right = RIGHT_TRAYS[getRightTier() - 2];
         for (int i = 0; i < right.length; i++) {
-            double d = rayToTrayDist(mex, ey, mez, mdx, mdy, mdz, dirDot, right[i]);
-            if (d < bestDist) { bestDist = d; bestSlot = SLOTS_PER_SHELF + i; }
+            double[] r = rayToTray(mex, ey, mez, mdx, mdy, mdz, dirDot, right[i]);
+            if (r[0] < bestDist) { bestDist = r[0]; bestSlotT = r[1]; bestSlot = SLOTS_PER_SHELF + i; }
         }
-        return (bestSlot >= 0 && bestDist <= maxDist) ? bestSlot : -1;
+        boolean slotValid = bestSlot >= 0 && bestDist <= maxDist;
+
+        // Ganador = el candidato válido con menor t
+        double bestT = Double.MAX_VALUE;
+        int result = -1;
+        if (slotValid && bestSlotT < bestT) { bestT = bestSlotT; result = bestSlot; }
+        if (payT >= 0 && payT < bestT) { bestT = payT; result = -2; }
+        if (deliveryT >= 0 && deliveryT < bestT) { result = -3; }
+        return result;
     }
 
-    private static double rayToTrayDist(double ex, double ey, double ez,
-                                        double dx, double dy, double dz, double dirDot,
-                                        float[] tray) {
+    /**
+     * Distancia (t) a la que el rayo entra en la caja, o -1 si no la toca.
+     * Método de las "slabs": funciona mires de frente, de lado o desde arriba.
+     */
+    private static double rayBoxDistance(double ox, double oy, double oz,
+                                         double dx, double dy, double dz,
+                                         float[] min, float[] max) {
+        double tmin = 0.0;
+        double tmax = Double.MAX_VALUE;
+        double[] o = {ox, oy, oz};
+        double[] d = {dx, dy, dz};
+        for (int a = 0; a < 3; a++) {
+            if (Math.abs(d[a]) < 1e-8) {
+                if (o[a] < min[a] || o[a] > max[a]) return -1;
+            } else {
+                double t1 = (min[a] - o[a]) / d[a];
+                double t2 = (max[a] - o[a]) / d[a];
+                if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
+                tmin = Math.max(tmin, t1);
+                tmax = Math.min(tmax, t2);
+                if (tmax < tmin) return -1;
+            }
+        }
+        return tmin;
+    }
+
+    /** @return {distancia perpendicular al centro de la bandeja, t sobre el rayo}. */
+    private static double[] rayToTray(double ex, double ey, double ez,
+                                      double dx, double dy, double dz, double dirDot,
+                                      float[] tray) {
         // El punto de mira es donde se DIBUJA el ítem (bandeja + offset)
         double diffX = tray[0] - ex, diffY = (tray[1] + TRAY_Y_OFFSET) - ey, diffZ = tray[2] - ez;
         double t = (diffX * dx + diffY * dy + diffZ * dz) / dirDot;
-        if (t < 0) return Double.MAX_VALUE;
+        if (t < 0) return new double[]{Double.MAX_VALUE, Double.MAX_VALUE};
         double px = ex + dx * t - tray[0];
         double py = ey + dy * t - (tray[1] + TRAY_Y_OFFSET);
         double pz = ez + dz * t - tray[2];
-        return Math.sqrt(px * px + py * py + pz * pz);
+        return new double[]{Math.sqrt(px * px + py * py + pz * pz), t};
     }
 
     // ── Operaciones del menú (Fase 4, validadas en servidor) ─────────────────
@@ -545,7 +591,8 @@ public class PlayerShopBlockEntity extends BlockEntity {
      * Configura un slot de venta. El ítem debe existir en el stock de la tienda
      * (o estar vacío el slot). count del saleItem = unidades por compra.
      */
-    public String applySlotConfig(int slotIndex, ItemStack saleItem, ItemStack priceItem, int priceAmount) {
+    public String applySlotConfig(int slotIndex, ItemStack saleItem, ItemStack priceItem,
+                                  int priceAmount, int rotation) {
         PlayerShopSlot slot = getSlot(slotIndex);
         if (slot == null) return "invalid";
         if (!saleItem.isEmpty() && stock.countOf(saleItem.copyWithCount(1)) <= 0) {
@@ -558,6 +605,7 @@ public class PlayerShopBlockEntity extends BlockEntity {
         slot.setSaleItem(saleItem);
         slot.setPriceItem(priceItem);
         slot.setPriceAmount(priceAmount);
+        slot.setRotation(rotation);
         setChanged();
         syncToClient();
         return null;
@@ -567,6 +615,15 @@ public class PlayerShopBlockEntity extends BlockEntity {
         PlayerShopSlot slot = getSlot(slotIndex);
         if (slot == null) return;
         slot.clear();
+        setChanged();
+        syncToClient();
+    }
+
+    /** Gira el ítem del slot un cuarto de vuelta (horizontal). */
+    public void rotateSlot(int slotIndex) {
+        PlayerShopSlot slot = getSlot(slotIndex);
+        if (slot == null || slot.isEmpty()) return;
+        slot.rotate();
         setChanged();
         syncToClient();
     }
@@ -790,6 +847,48 @@ public class PlayerShopBlockEntity extends BlockEntity {
     public IItemHandler getImportHandler() { return importHandler; }
     public IItemHandler getExportHandler() { return exportHandler; }
 
+    /**
+     * Construye el ítem de la tienda llevándose TODO su contenido: productos,
+     * precios, stock, mejoras (estantes, capacidad, vacío), socios, renta y
+     * entregas pendientes. Al colocarlo, vanilla aplica BLOCK_ENTITY_DATA antes
+     * de {@code setPlacedBy}, así que la tienda revive tal cual estaba.
+     */
+    public ItemStack createShopItem(HolderLookup.Provider registries) {
+        ItemStack stack = new ItemStack(
+                com.example.betteradminshop.registry.ModBlocks.PLAYER_SHOP_ITEM.get());
+        CompoundTag data = saveWithoutMetadata(registries);
+        stack.set(net.minecraft.core.component.DataComponents.BLOCK_ENTITY_DATA,
+                net.minecraft.world.item.component.CustomData.of(data));
+
+        // Resumen legible para saber, mirando el ítem, qué lleva dentro
+        List<net.minecraft.network.chat.Component> lore = new ArrayList<>();
+        int products = 0;
+        for (PlayerShopSlot slot : slots) if (!slot.isEmpty()) products++;
+        int stockUnits = 0;
+        for (int i = 0; i < StockInventory.SLOTS; i++) stockUnits += stock.getCount(i);
+
+        lore.add(net.minecraft.network.chat.Component.literal(
+                "§7Tienda de §f" + (ownerName.isEmpty() ? "?" : ownerName))
+                .withStyle(st -> st.withItalic(false)));
+        lore.add(net.minecraft.network.chat.Component.literal(
+                "§7Estantes: §f" + getLeftTier() + " §7/ §f" + getRightTier())
+                .withStyle(st -> st.withItalic(false)));
+        lore.add(net.minecraft.network.chat.Component.literal(
+                "§7Productos: §f" + products + "  §7Stock: §f" + stockUnits + " ítems")
+                .withStyle(st -> st.withItalic(false)));
+        lore.add(net.minecraft.network.chat.Component.literal(
+                "§7Capacidad: §f" + StockInventory.TIER_STACKS[stock.getCapacityTier()]
+                + " stacks/slot" + (stock.hasVoidUpgrade() ? " §7· §fvacío" : ""))
+                .withStyle(st -> st.withItalic(false)));
+        if (!managers.isEmpty()) {
+            lore.add(net.minecraft.network.chat.Component.literal(
+                    "§7Socios: §f" + managers.size()).withStyle(st -> st.withItalic(false)));
+        }
+        stack.set(net.minecraft.core.component.DataComponents.LORE,
+                new net.minecraft.world.item.component.ItemLore(lore));
+        return stack;
+    }
+
     // ── Bloqueo de orientación (misma defensa que la tienda admin) ───────────
 
     public void setLockedFacing(Direction facing) {
@@ -897,6 +996,9 @@ public class PlayerShopBlockEntity extends BlockEntity {
         tag.put("DeliveryQueue", queueTag);
 
         tag.putLong("RentPaidUntil", rentPaidUntilMs);
+        // Tiers actuales del blockstate (para sobrevivir a romper/recolocar)
+        tag.putInt("LeftTier", getLeftTier());
+        tag.putInt("RightTier", getRightTier());
         // Cachés de config global para el cliente (HUD/render/menú)
         if (level instanceof ServerLevel serverLevel && serverLevel.getServer() != null) {
             var settings = com.example.betteradminshop.data.PlayerShopSettings.get(serverLevel.getServer());
@@ -981,6 +1083,8 @@ public class PlayerShopBlockEntity extends BlockEntity {
         }
 
         rentPaidUntilMs = tag.getLong("RentPaidUntil");
+        storedLeftTier = tag.contains("LeftTier") ? Math.max(2, Math.min(4, tag.getInt("LeftTier"))) : 2;
+        storedRightTier = tag.contains("RightTier") ? Math.max(2, Math.min(4, tag.getInt("RightTier"))) : 2;
         rentFreeCache = !tag.contains("RentFree") || tag.getBoolean("RentFree");
         rentItemCache = tag.contains("RentInfoItem")
                 ? ItemStack.parseOptional(registries, tag.getCompound("RentInfoItem")) : ItemStack.EMPTY;

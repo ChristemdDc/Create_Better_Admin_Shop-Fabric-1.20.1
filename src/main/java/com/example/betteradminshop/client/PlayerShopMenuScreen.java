@@ -100,6 +100,8 @@ public class PlayerShopMenuScreen extends Screen {
     private static ItemStack clipSale = ItemStack.EMPTY;
     private static ItemStack clipPrice = ItemStack.EMPTY;
     private static int clipPriceAmount = 1;
+    /** La rotación viaja con el producto al copiar/pegar. */
+    private static int clipRotation = 0;
 
     /** Arrastre de slots para reorganizar. */
     private int dragSlot = -1;
@@ -381,7 +383,8 @@ public class PlayerShopMenuScreen extends Screen {
     }
 
     private static final String[] OPTION_LABELS = {
-            "Modificar ítem", "Modificar precio", "Limpiar slot", "Copiar slot", "Pegar slot"};
+            "Modificar ítem", "Modificar precio", "Rotar ítem",
+            "Limpiar slot", "Copiar slot", "Pegar slot"};
 
     private void renderOptionsPopup(GuiGraphics g, int mx, int my) {
         int w = 110, rowH = 15;
@@ -393,7 +396,7 @@ public class PlayerShopMenuScreen extends Screen {
         border(g, x, y, w, rows * rowH + 6, COL_GOLD);
         for (int i = 0; i < rows; i++) {
             int ry = y + 3 + i * rowH;
-            boolean disabled = (i == 4 && clipSale.isEmpty());
+            boolean disabled = (i == 5 && clipSale.isEmpty());
             boolean hov = !disabled && in(mx, my, x + 2, ry, w - 4, rowH);
             if (hov) g.fill(x + 2, ry, x + w - 2, ry + rowH, COL_ACCENT);
             int col = disabled ? 0xFF80735C : (hov ? 0xFFFFFFFF : COL_CREAM);
@@ -849,24 +852,35 @@ public class PlayerShopMenuScreen extends Screen {
                 priceScroll = 0;
                 priceOverlay = true;
             }
-            case 2 -> { // Limpiar
+            case 2 -> { // Rotar (giro horizontal, 90° por clic)
+                if (!s.isEmpty()) {
+                    PlayerShopNetworking.sendRotateSlot(shopPos, slot);
+                    s.rotate(); // reflejo inmediato
+                } else {
+                    msg("§eEste slot no tiene ningún ítem para rotar.");
+                }
+            }
+            case 3 -> { // Limpiar
                 PlayerShopNetworking.sendClearSlot(shopPos, slot);
                 s.clear(); // reflejo inmediato
             }
-            case 3 -> { // Copiar
+            case 4 -> { // Copiar
                 if (!s.isEmpty()) {
                     clipSale = s.getSaleItem().copy();
                     clipPrice = s.getPriceItem().copy();
                     clipPriceAmount = s.getPriceAmount();
+                    clipRotation = s.getRotation();
                     msg("§aSlot copiado.");
                 }
             }
-            case 4 -> { // Pegar
+            case 5 -> { // Pegar
                 if (!clipSale.isEmpty()) {
-                    PlayerShopNetworking.sendSetSlot(shopPos, slot, clipSale, clipPrice, clipPriceAmount);
+                    PlayerShopNetworking.sendSetSlot(shopPos, slot, clipSale, clipPrice,
+                            clipPriceAmount, clipRotation);
                     s.setSaleItem(clipSale);
                     s.setPriceItem(clipPrice);
                     s.setPriceAmount(clipPriceAmount);
+                    s.setRotation(clipRotation);
                 }
             }
         }
@@ -946,9 +960,9 @@ public class PlayerShopMenuScreen extends Screen {
                 PlayerShopSlot s = shop.getSlot(pickTargetSlot);
                 ItemStack sale = pickSelected.copyWithCount(amt);
                 if (s != null && !s.getPriceItem().isEmpty()) {
-                    // Ya tiene precio → aplicar de una
+                    // Ya tiene precio → aplicar de una (conserva su rotación)
                     PlayerShopNetworking.sendSetSlot(shopPos, pickTargetSlot, sale,
-                            s.getPriceItem(), s.getPriceAmount());
+                            s.getPriceItem(), s.getPriceAmount(), s.getRotation());
                     s.setSaleItem(sale); // reflejo inmediato
                     view = View.MAIN;
                 } else {
@@ -1002,7 +1016,7 @@ public class PlayerShopMenuScreen extends Screen {
             if (!pendingSale.isEmpty()) {
                 // Ítem nuevo + precio: se aplican JUNTOS (nada gratis)
                 PlayerShopNetworking.sendSetSlot(shopPos, priceTargetSlot,
-                        pendingSale, priceSelected, amt);
+                        pendingSale, priceSelected, amt, s == null ? 0 : s.getRotation());
                 if (s != null) {
                     s.setSaleItem(pendingSale); // reflejo inmediato
                     s.setPriceItem(priceSelected);
@@ -1011,7 +1025,7 @@ public class PlayerShopMenuScreen extends Screen {
                 pendingSale = ItemStack.EMPTY;
             } else if (s != null && !s.isEmpty()) {
                 PlayerShopNetworking.sendSetSlot(shopPos, priceTargetSlot,
-                        s.getSaleItem(), priceSelected, amt);
+                        s.getSaleItem(), priceSelected, amt, s.getRotation());
                 s.setPriceItem(priceSelected); // reflejo inmediato
                 s.setPriceAmount(amt);
             }

@@ -31,7 +31,8 @@ public final class PlayerShopNetworking {
 
     /** Configura ítem en venta (count = unidades por compra) + precio de un slot. */
     public record SetSlot(BlockPos pos, int slot, ItemStack saleItem,
-                          ItemStack priceItem, int priceAmount) implements CustomPacketPayload {
+                          ItemStack priceItem, int priceAmount, int rotation)
+            implements CustomPacketPayload {
         public static final Type<SetSlot> TYPE = new Type<>(BetterAdminShop.id("pshop_set_slot"));
         public static final StreamCodec<RegistryFriendlyByteBuf, SetSlot> STREAM_CODEC = StreamCodec.composite(
                 BlockPos.STREAM_CODEC, SetSlot::pos,
@@ -39,6 +40,7 @@ public final class PlayerShopNetworking {
                 ItemStack.OPTIONAL_STREAM_CODEC, SetSlot::saleItem,
                 ItemStack.OPTIONAL_STREAM_CODEC, SetSlot::priceItem,
                 ByteBufCodecs.VAR_INT, SetSlot::priceAmount,
+                ByteBufCodecs.VAR_INT, SetSlot::rotation,
                 SetSlot::new);
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
@@ -49,6 +51,16 @@ public final class PlayerShopNetworking {
                 BlockPos.STREAM_CODEC, ClearSlot::pos,
                 ByteBufCodecs.VAR_INT, ClearSlot::slot,
                 ClearSlot::new);
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
+    /** Gira el ítem del slot un cuarto de vuelta (horizontal). */
+    public record RotateSlot(BlockPos pos, int slot) implements CustomPacketPayload {
+        public static final Type<RotateSlot> TYPE = new Type<>(BetterAdminShop.id("pshop_rotate_slot"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, RotateSlot> STREAM_CODEC = StreamCodec.composite(
+                BlockPos.STREAM_CODEC, RotateSlot::pos,
+                ByteBufCodecs.VAR_INT, RotateSlot::slot,
+                RotateSlot::new);
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
@@ -151,6 +163,7 @@ public final class PlayerShopNetworking {
         r.playToServer(SetSlot.TYPE, SetSlot.STREAM_CODEC, PlayerShopNetworking::handleSetSlot);
         r.playToServer(ClearSlot.TYPE, ClearSlot.STREAM_CODEC, PlayerShopNetworking::handleClearSlot);
         r.playToServer(SwapSlots.TYPE, SwapSlots.STREAM_CODEC, PlayerShopNetworking::handleSwapSlots);
+        r.playToServer(RotateSlot.TYPE, RotateSlot.STREAM_CODEC, PlayerShopNetworking::handleRotateSlot);
         r.playToServer(Upgrade.TYPE, Upgrade.STREAM_CODEC, PlayerShopNetworking::handleUpgrade);
         r.playToServer(Purge.TYPE, Purge.STREAM_CODEC, PlayerShopNetworking::handlePurge);
         r.playToServer(Manager.TYPE, Manager.STREAM_CODEC, PlayerShopNetworking::handleManager);
@@ -220,7 +233,8 @@ public final class PlayerShopNetworking {
     private static void handleSetSlot(SetSlot msg, IPayloadContext ctx) {
         PlayerShopBlockEntity shop = managedShop(ctx, msg.pos());
         if (shop == null) return;
-        String result = shop.applySlotConfig(msg.slot(), msg.saleItem(), msg.priceItem(), msg.priceAmount());
+        String result = shop.applySlotConfig(msg.slot(), msg.saleItem(), msg.priceItem(),
+                msg.priceAmount(), msg.rotation());
         if (ctx.player() instanceof ServerPlayer p) {
             if ("not_in_stock".equals(result)) {
                 p.displayClientMessage(Component.literal(
@@ -235,6 +249,11 @@ public final class PlayerShopNetworking {
     private static void handleClearSlot(ClearSlot msg, IPayloadContext ctx) {
         PlayerShopBlockEntity shop = managedShop(ctx, msg.pos());
         if (shop != null) shop.clearSlotConfig(msg.slot());
+    }
+
+    private static void handleRotateSlot(RotateSlot msg, IPayloadContext ctx) {
+        PlayerShopBlockEntity shop = managedShop(ctx, msg.pos());
+        if (shop != null) shop.rotateSlot(msg.slot());
     }
 
     private static void handleSwapSlots(SwapSlots msg, IPayloadContext ctx) {
@@ -312,12 +331,17 @@ public final class PlayerShopNetworking {
 
     // ── Helpers de envío (cliente) ───────────────────────────────────────────
 
-    public static void sendSetSlot(BlockPos pos, int slot, ItemStack sale, ItemStack price, int amount) {
-        PacketDistributor.sendToServer(new SetSlot(pos, slot, sale, price, amount));
+    public static void sendSetSlot(BlockPos pos, int slot, ItemStack sale, ItemStack price,
+                                   int amount, int rotation) {
+        PacketDistributor.sendToServer(new SetSlot(pos, slot, sale, price, amount, rotation));
     }
 
     public static void sendClearSlot(BlockPos pos, int slot) {
         PacketDistributor.sendToServer(new ClearSlot(pos, slot));
+    }
+
+    public static void sendRotateSlot(BlockPos pos, int slot) {
+        PacketDistributor.sendToServer(new RotateSlot(pos, slot));
     }
 
     public static void sendSwapSlots(BlockPos pos, int a, int b) {

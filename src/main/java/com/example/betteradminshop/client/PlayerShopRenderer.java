@@ -39,8 +39,8 @@ import java.util.Objects;
 public class PlayerShopRenderer implements BlockEntityRenderer<PlayerShopBlockEntity> {
 
     private final ItemRenderer itemRenderer;
-    private static final float ITEM_SCALE = 0.24f;
-    private static final float SELECT_BOX_HALF = 1.5f / 16f;
+    private static final float ITEM_SCALE = 0.32f;
+    private static final float SELECT_BOX_HALF = 2.1f / 16f;
     /** Altura del ítem y del recuadro sobre la bandeja (compartida con el raycast). */
     private static final float ITEM_Y_OFFSET = PlayerShopBlockEntity.TRAY_Y_OFFSET;
     private static final ItemStack PACKAGE_DISPLAY_STACK = PackageItem.containing(java.util.List.of());
@@ -110,7 +110,9 @@ public class PlayerShopRenderer implements BlockEntityRenderer<PlayerShopBlockEn
             poseStack.pushPose();
             poseStack.translate(pos[0], pos[1] + ITEM_Y_OFFSET, pos[2]);
             poseStack.scale(ITEM_SCALE, ITEM_SCALE, ITEM_SCALE);
-            poseStack.mulPose(Axis.YP.rotationDegrees(180));
+            // Giro horizontal: 180° base + los cuartos de vuelta del slot
+            // (negativo = sentido horario visto desde arriba).
+            poseStack.mulPose(Axis.YP.rotationDegrees(180 - slot.getRotation() * 90f));
             itemRenderer.renderStatic(slot.getSaleItem(), ItemDisplayContext.FIXED, packedLight,
                     OverlayTexture.NO_OVERLAY, poseStack, bufferSource, null, 0);
             if (be.stockFor(slotIndex) < slot.getSellAmount()) {

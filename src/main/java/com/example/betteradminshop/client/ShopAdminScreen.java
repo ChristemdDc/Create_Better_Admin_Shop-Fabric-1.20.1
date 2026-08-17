@@ -68,6 +68,9 @@ public class ShopAdminScreen extends Screen {
     private CustomButton price1Btn, price2Btn, price2RemoveBtn;
     private CustomButton saveBtn, restockBtn, clearBtn;
 
+    /** Ítems del inventario del jugador mostrados dentro del selector. */
+    private final List<ItemStack> inventoryItems = new ArrayList<>();
+
     // Botones grandes de elección de tipo (slot vacío)
     private int ventaRectX, compraRectX, bigRectY, bigRectH;
     private int ventaRectW, compraRectW;
@@ -102,6 +105,14 @@ public class ShopAdminScreen extends Screen {
     // Item picker
     private static final int PICKER_WIDTH = 240;
     private static final int PICKER_HEIGHT = 210;
+    /** Panel IZQUIERDO: inventario completo del jugador (9x4 = 36 slots). */
+    private static final int INV_COLS = 9;
+    private static final int INV_STORAGE_ROWS = 3;   // 27 de almacenamiento
+    private static final int INV_PANEL_W = INV_COLS * 20 + 20;
+    private static final int INV_PANEL_H = 18 + 8 + INV_STORAGE_ROWS * 20 + 8 + 20 + 10;
+    /** Separación entre el panel de inventario y el del buscador. */
+    private static final int PANEL_GAP = 12;
+    private int invPanelX, invPanelY;
     private static final int PICKER_COLS = 10;
     private static final int PICKER_SLOT_SIZE = 20;
     private CustomTextField pickerSearchField;
@@ -114,20 +125,23 @@ public class ShopAdminScreen extends Screen {
     // NOTA: en 1.21+ Screen.renderBackground aplica un blur al mundo. Si los
     // colores de panel usan alpha < 0xFF, el blur del mundo se cuela y todo
     // el contenido del menu se ve "borroso". Por eso 0xFF en los fondos.
-    private static final int COL_BG = 0xFF181825;
-    private static final int COL_BG_INNER = 0xFF222235;
-    private static final int COL_BG_FIELD = 0xFF1A1A2C;
+    private static final int COL_BG = 0xFF14141F;
+    private static final int COL_BG_INNER = 0xFF1E1E2E;
+    private static final int COL_BG_FIELD = 0xFF12121C;
     private static final int COL_ACCENT = 0xFF6C63FF;
     private static final int COL_ACCENT_DIM = 0xFF4A4499;
-    private static final int COL_TEXT = 0xFFE0E0E0;
-    private static final int COL_TEXT_DIM = 0xFF888899;
+    private static final int COL_TEXT = 0xFFEDEDF5;
+    private static final int COL_TEXT_DIM = 0xFF8E8EA6;
     private static final int COL_GREEN = 0xFF55DD55;
     private static final int COL_RED = 0xFFFF5555;
     private static final int COL_YELLOW = 0xFFFFDD55;
-    private static final int COL_SLOT_BG = 0xFF2A2A40;
-    private static final int COL_SLOT_HOVER = 0xFF3A3A55;
+    private static final int COL_SLOT_BG = 0xFF262637;
+    private static final int COL_SLOT_HOVER = 0xFF3A3A57;
     private static final int COL_SLOT_SELECTED = 0xFF4A4A77;
-    private static final int COL_BORDER = 0xFF444466;
+    private static final int COL_BORDER = 0xFF3D3D5C;
+    /** Realce superior sutil para dar relieve a los paneles. */
+    private static final int COL_HIGHLIGHT = 0x22FFFFFF;
+    private static final int COL_SHADOW = 0x33000000;
     private static final int COL_DIRTY = 0xFFFFAA33;
     // Colores por tipo (coinciden con records y HUD)
     private static final int COL_VENTA     = 0xFF55DD55;
@@ -157,8 +171,13 @@ public class ShopAdminScreen extends Screen {
         filteredItems.clear();
         filteredItems.addAll(allItems);
 
-        pickerX = (width - PICKER_WIDTH) / 2;
+        // Dos paneles lado a lado, centrados como conjunto
+        int totalW = INV_PANEL_W + PANEL_GAP + PICKER_WIDTH;
+        int startX = (width - totalW) / 2;
+        invPanelX = startX;
+        pickerX = startX + INV_PANEL_W + PANEL_GAP;
         pickerY = (height - PICKER_HEIGHT) / 2;
+        invPanelY = pickerY;
 
         initConfigWidgets();
         initSlotGrid();
@@ -312,11 +331,69 @@ public class ShopAdminScreen extends Screen {
         pickerSearchField.setResponder(this::filterItems);
     }
 
+    /**
+     * Refresca el inventario del jugador para el panel izquierdo, INDEXADO por
+     * slot real (0-8 hotbar, 9-35 almacenamiento) para que la disposición en
+     * pantalla coincida con la del inventario del jugador.
+     */
+    private void refreshInventoryItems() {
+        inventoryItems.clear();
+        var player = Minecraft.getInstance().player;
+        if (player == null) return;
+        var inv = player.getInventory();
+        for (int i = 0; i < 36; i++) {
+            ItemStack s = i < inv.getContainerSize() ? inv.getItem(i) : ItemStack.EMPTY;
+            inventoryItems.add(s.isEmpty() ? ItemStack.EMPTY : s.copyWithCount(1));
+        }
+    }
+
+    /** Ítem del slot de inventario (vacío si fuera de rango). */
+    private ItemStack invItem(int slot) {
+        return (slot >= 0 && slot < inventoryItems.size()) ? inventoryItems.get(slot) : ItemStack.EMPTY;
+    }
+
+    /** Filas visibles de la rejilla del registro (sin contar el inventario). */
+    private static int pickerVisibleRows() {
+        return (PICKER_HEIGHT - 70) / PICKER_SLOT_SIZE;
+    }
+
+    /** Y de la primera fila de almacenamiento del panel de inventario. */
+    private int invStorageY() {
+        return invPanelY + 18 + 8;
+    }
+
+    /** Y de la fila de la hotbar (separada, como en el inventario real). */
+    private int invHotbarY() {
+        return invStorageY() + INV_STORAGE_ROWS * PICKER_SLOT_SIZE + 8;
+    }
+
+    /**
+     * Índice del slot de inventario bajo el cursor en el panel izquierdo, o -1.
+     * Orden del inventario de MC: 0-8 hotbar, 9-35 almacenamiento. En pantalla
+     * mostramos primero el almacenamiento (9-35) y abajo la hotbar (0-8).
+     */
+    private int invSlotAt(double mx, double my) {
+        int gx = invPanelX + 10;
+        int col = (int) Math.floor((mx - gx) / PICKER_SLOT_SIZE);
+        if (col < 0 || col >= INV_COLS) return -1;
+        int storageY = invStorageY();
+        if (my >= storageY && my < storageY + INV_STORAGE_ROWS * PICKER_SLOT_SIZE) {
+            int row = (int) ((my - storageY) / PICKER_SLOT_SIZE);
+            return 9 + row * INV_COLS + col;
+        }
+        int hotbarY = invHotbarY();
+        if (my >= hotbarY && my < hotbarY + PICKER_SLOT_SIZE) {
+            return col;
+        }
+        return -1;
+    }
+
     private void openPicker(Mode mode) {
         if (selectedSlot < 0) return;
         if (mode != Mode.PICKING_SALE_ITEM && cfgSaleItem.isEmpty()) return;
         currentMode = mode;
         pickerScrollOffset = 0;
+        refreshInventoryItems();
         filterItems("");
         pickerSearchField.setValue("");
         pickerSearchField.setFocused(true);
@@ -405,8 +482,11 @@ public class ShopAdminScreen extends Screen {
             }
         }
 
-        drawSectionHeader(g, leftX + 12, topY + 25, "▾ Estante Izquierdo");
-        drawSectionHeader(g, leftX + 12, topY + 135, "▾ Estante Derecho");
+        // Tarjetas de los estantes (dan estructura a la columna izquierda)
+        drawCard(g, leftX + 8, topY + 22, LEFT_PANEL_W - 14, 108);
+        drawCard(g, leftX + 8, topY + 132, LEFT_PANEL_W - 14, 108);
+        drawSectionHeader(g, leftX + 12, topY + 26, "Estante Izquierdo");
+        drawSectionHeader(g, leftX + 12, topY + 136, "Estante Derecho");
 
         for (SlotWidget sw : slotWidgets) {
             ShopSlot slot = shopBE.getSlot(sw.slotIndex);
@@ -495,18 +575,35 @@ public class ShopAdminScreen extends Screen {
     }
 
     private void drawPanel(GuiGraphics g, int x, int y, int w, int h) {
-        g.fill(x + 2, y + 2, x + w + 2, y + h + 2, 0x80000000);
+        // Sombra proyectada difusa (dos capas) para separar del mundo
+        g.fill(x + 4, y + 4, x + w + 4, y + h + 4, 0x50000000);
+        g.fill(x + 2, y + 2, x + w + 2, y + h + 2, 0x70000000);
         g.fill(x - 1, y - 1, x + w + 1, y + h + 1, COL_BORDER);
         g.fill(x, y, x + w, y + h, COL_BG);
+        // Realce superior: da sensación de relieve
+        g.fill(x + 1, y + 1, x + w - 1, y + 2, COL_HIGHLIGHT);
+    }
+
+    /** Panel interior (tarjeta) con borde y realce, para agrupar contenido. */
+    private void drawCard(GuiGraphics g, int x, int y, int w, int h) {
+        g.fill(x, y, x + w, y + h, COL_BG_INNER);
+        drawBorder(g, x, y, w, h, COL_BORDER);
+        g.fill(x + 1, y + 1, x + w - 1, y + 2, COL_HIGHLIGHT);
     }
 
     private void drawAccentBar(GuiGraphics g, int x, int y, int w, int h) {
+        // Degradado vertical simulado en tres bandas + línea de acento
         g.fill(x, y, x + w, y + h, COL_ACCENT_DIM);
-        g.fill(x, y + h - 1, x + w, y + h, COL_ACCENT);
+        g.fill(x, y, x + w, y + h / 2, COL_ACCENT);
+        g.fill(x, y + h / 2, x + w, y + h - 2, COL_ACCENT_DIM);
+        g.fill(x, y + h - 2, x + w, y + h, 0xFF2E2A66);
+        g.fill(x, y, x + w, y + 1, COL_HIGHLIGHT);
     }
 
+    /** Encabezado de sección con marca de acento a la izquierda. */
     private void drawSectionHeader(GuiGraphics g, int x, int y, String text) {
-        g.drawString(font, text, x, y, COL_YELLOW);
+        g.fill(x, y - 1, x + 2, y + 9, COL_ACCENT);
+        g.drawString(font, text, x + 6, y, COL_YELLOW);
     }
 
     private void renderSlotWidget(GuiGraphics g, SlotWidget sw, ShopSlot slot,
@@ -522,6 +619,12 @@ public class ShopAdminScreen extends Screen {
         if (selected) borderColor = COL_ACCENT;
         g.fill(sw.x, sw.y, sw.x + sw.size, sw.y + sw.size, borderColor);
         g.fill(sw.x + 1, sw.y + 1, sw.x + sw.size - 1, sw.y + sw.size - 1, bg);
+        // Realce interior superior: aspecto de casilla hundida
+        g.fill(sw.x + 1, sw.y + 1, sw.x + sw.size - 1, sw.y + 2, COL_HIGHLIGHT);
+        if (selected) {
+            // Doble borde de acento para que la selección cante
+            drawBorder(g, sw.x - 1, sw.y - 1, sw.size + 2, sw.size + 2, COL_ACCENT);
+        }
 
         if (slot != null && !slot.isEmpty()) {
             g.renderItem(slot.getRenderItem(), sw.x + 4, sw.y + 4);
@@ -542,17 +645,34 @@ public class ShopAdminScreen extends Screen {
         int ph = GUI_HEIGHT - 27;
 
         g.fill(px, py, px + pw - 5, py + ph, COL_BG_INNER);
-        g.fill(px, py, px + 1, py + ph, COL_BORDER);
+        g.fill(px, py, px + 1, py + ph, COL_ACCENT_DIM);   // separador con acento
+        g.fill(px + 1, py, px + pw - 5, py + 1, COL_HIGHLIGHT);
 
         if (selectedSlot < 0) {
-            g.drawCenteredString(font, "Selecciona un slot del estante", px + pw / 2, py + ph / 2 - 8, COL_TEXT_DIM);
-            g.drawCenteredString(font, "para configurarlo", px + pw / 2, py + ph / 2 + 4, COL_TEXT_DIM);
+            // Estado vacío ilustrado: recuadro punteado + guía
+            int bw = 120, bh = 46;
+            int bx = px + (pw - 5 - bw) / 2, by = py + ph / 2 - bh;
+            for (int i = 0; i < bw; i += 6) {           // borde punteado
+                g.fill(bx + i, by, bx + Math.min(i + 3, bw), by + 1, COL_BORDER);
+                g.fill(bx + i, by + bh - 1, bx + Math.min(i + 3, bw), by + bh, COL_BORDER);
+            }
+            for (int i = 0; i < bh; i += 6) {
+                g.fill(bx, by + i, bx + 1, by + Math.min(i + 3, bh), COL_BORDER);
+                g.fill(bx + bw - 1, by + i, bx + bw, by + Math.min(i + 3, bh), COL_BORDER);
+            }
+            g.drawCenteredString(font, "+", bx + bw / 2, by + bh / 2 - 4, COL_BORDER);
+            g.drawCenteredString(font, "Selecciona un slot del estante",
+                    px + (pw - 5) / 2, by + bh + 12, COL_TEXT);
+            g.drawCenteredString(font, "§8para configurar su producto",
+                    px + (pw - 5) / 2, by + bh + 24, COL_TEXT_DIM);
             return;
         }
 
         // Encabezado
+        g.fill(px + 1, py + 1, px + pw - 5, py + 20, 0xFF23233A);
         String slotLabel = "Slot #" + (selectedSlot + 1)
                 + (selectedSlot < ShopBlockEntity.SLOTS_PER_GROUP ? " (Estante Izq.)" : " (Estante Der.)");
+        g.fill(cfgLeftX - 4, py + 5, cfgLeftX - 2, py + 15, COL_ACCENT);
         g.drawString(font, slotLabel, cfgLeftX, py + 8, COL_ACCENT);
 
         copyIconShown = false;
@@ -805,8 +925,49 @@ public class ShopAdminScreen extends Screen {
 
     // ==================== ITEM PICKER ====================
 
+    /** Panel IZQUIERDO: inventario completo del jugador (ítems reales con NBT). */
+    private void renderInventoryPanel(GuiGraphics g, int mouseX, int mouseY) {
+        drawPanel(g, invPanelX, invPanelY, INV_PANEL_W, INV_PANEL_H);
+        drawAccentBar(g, invPanelX, invPanelY, INV_PANEL_W, 18);
+        g.drawCenteredString(font, "Tu inventario", invPanelX + INV_PANEL_W / 2, invPanelY + 5, 0xFFFFFF);
+
+        int gx = invPanelX + 10;
+        ItemStack hoveredStack = ItemStack.EMPTY;
+
+        // Almacenamiento (slots 9-35) y hotbar (0-8), como en el inventario real
+        for (int i = 0; i < 36; i++) {
+            boolean hotbar = i < INV_COLS;
+            int col = hotbar ? i : (i - 9) % INV_COLS;
+            int row = hotbar ? 0 : (i - 9) / INV_COLS;
+            int ix = gx + col * PICKER_SLOT_SIZE;
+            int iy = hotbar ? invHotbarY() : invStorageY() + row * PICKER_SLOT_SIZE;
+
+            boolean hovered = mouseX >= ix && mouseX < ix + PICKER_SLOT_SIZE
+                    && mouseY >= iy && mouseY < iy + PICKER_SLOT_SIZE;
+            g.fill(ix, iy, ix + PICKER_SLOT_SIZE, iy + PICKER_SLOT_SIZE,
+                    hovered ? COL_SLOT_HOVER : COL_SLOT_BG);
+            g.fill(ix + 1, iy + 1, ix + PICKER_SLOT_SIZE - 1, iy + PICKER_SLOT_SIZE - 1,
+                    hovered ? 0xFF333350 : 0xFF1A1A2A);
+
+            ItemStack stack = invItem(i);
+            if (!stack.isEmpty()) {
+                g.renderItem(stack, ix + 2, iy + 2);
+                if (hovered) hoveredStack = stack;
+            }
+        }
+
+        g.drawString(font, "§8Conserva encantamientos y NBT",
+                invPanelX + 10, invPanelY + INV_PANEL_H - 12, COL_TEXT_DIM, false);
+
+        if (!hoveredStack.isEmpty()) {
+            g.renderTooltip(font, hoveredStack, mouseX, mouseY);
+        }
+    }
+
     private void renderPickerOverlay(GuiGraphics g, int mouseX, int mouseY) {
         g.fill(0, 0, width, height, 0xE0000000);
+
+        renderInventoryPanel(g, mouseX, mouseY);
 
         drawPanel(g, pickerX, pickerY, PICKER_WIDTH, PICKER_HEIGHT);
         drawAccentBar(g, pickerX, pickerY, PICKER_WIDTH, 18);
@@ -828,7 +989,7 @@ public class ShopAdminScreen extends Screen {
 
         int gridX = pickerX + 10;
         int gridY = pickerY + 42;
-        int visibleRows = (PICKER_HEIGHT - 70) / PICKER_SLOT_SIZE;
+        int visibleRows = pickerVisibleRows();
         int startIdx = pickerScrollOffset * PICKER_COLS;
 
         for (int row = 0; row < visibleRows; row++) {
@@ -865,10 +1026,10 @@ public class ShopAdminScreen extends Screen {
             g.fill(scrollBarX, thumbY, scrollBarX + 4, thumbY + thumbH, COL_ACCENT);
         }
 
-        g.drawString(font, filteredItems.size() + " items", pickerX + 10, pickerY + PICKER_HEIGHT - 14,
+        g.drawString(font, filteredItems.size() + " items", pickerX + 10, pickerY + PICKER_HEIGHT - 12,
                 COL_TEXT_DIM);
 
-        g.drawString(font, "[ESC] Cancelar", pickerX + PICKER_WIDTH - 80, pickerY + PICKER_HEIGHT - 14,
+        g.drawString(font, "[ESC] Cancelar", pickerX + PICKER_WIDTH - 80, pickerY + PICKER_HEIGHT - 12,
                 COL_TEXT_DIM);
 
         int gridW = PICKER_COLS * PICKER_SLOT_SIZE;
@@ -1026,9 +1187,17 @@ public class ShopAdminScreen extends Screen {
             return true;
         }
 
+        // Panel IZQUIERDO: toma el ítem REAL del inventario (con sus componentes)
+        int invSlot = invSlotAt(mouseX, mouseY);
+        if (invSlot >= 0) {
+            ItemStack stack = invItem(invSlot);
+            if (!stack.isEmpty()) onItemPicked(stack.copyWithCount(1));
+            return true;
+        }
+
         int gridX = pickerX + 10;
         int gridY = pickerY + 42;
-        int visibleRows = (PICKER_HEIGHT - 70) / PICKER_SLOT_SIZE;
+        int visibleRows = pickerVisibleRows();
         int startIdx = pickerScrollOffset * PICKER_COLS;
 
         if (mouseX >= gridX && mouseX < gridX + PICKER_COLS * PICKER_SLOT_SIZE &&
@@ -1046,8 +1215,11 @@ public class ShopAdminScreen extends Screen {
             }
         }
 
-        if (mouseX < pickerX || mouseX > pickerX + PICKER_WIDTH ||
-                mouseY < pickerY || mouseY > pickerY + PICKER_HEIGHT) {
+        boolean inPicker = mouseX >= pickerX && mouseX <= pickerX + PICKER_WIDTH
+                && mouseY >= pickerY && mouseY <= pickerY + PICKER_HEIGHT;
+        boolean inInventory = mouseX >= invPanelX && mouseX <= invPanelX + INV_PANEL_W
+                && mouseY >= invPanelY && mouseY <= invPanelY + INV_PANEL_H;
+        if (!inPicker && !inInventory) {
             closeItemPicker();
             return true;
         }
@@ -1146,7 +1318,7 @@ public class ShopAdminScreen extends Screen {
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (currentMode != Mode.NORMAL) {
             int totalRows = (filteredItems.size() + PICKER_COLS - 1) / PICKER_COLS;
-            int visibleRows = (PICKER_HEIGHT - 70) / PICKER_SLOT_SIZE;
+            int visibleRows = pickerVisibleRows();
             int maxScroll = Math.max(0, totalRows - visibleRows);
             pickerScrollOffset = Math.max(0, Math.min(maxScroll,
                     pickerScrollOffset - (int) Math.signum(scrollY)));
@@ -1371,8 +1543,9 @@ public class ShopAdminScreen extends Screen {
         }
 
         void draw(GuiGraphics g, Font font) {
-            // Background
+            // Fondo hundido (sombra interior arriba)
             g.fill(x, y, x + w, y + h, COL_BG_FIELD);
+            g.fill(x + 1, y + 1, x + w - 1, y + 2, 0x30000000);
             // Border: accent when focused, dim otherwise
             int bc = focused ? COL_ACCENT : COL_BORDER;
             g.fill(x,         y,         x + w,     y + 1,     bc);
@@ -1415,10 +1588,12 @@ public class ShopAdminScreen extends Screen {
 
         void draw(GuiGraphics g, Font font, int mouseX, int mouseY) {
             boolean hovered = isMouseOver(mouseX, mouseY);
-            int bg     = hovered ? COL_ACCENT_DIM : 0xFF1A1A2E;
+            int bg     = hovered ? COL_ACCENT_DIM : 0xFF23233A;
             int border = hovered ? COL_ACCENT      : COL_BORDER;
+            g.fill(x + 1, y + 1, x + w + 1, y + h + 1, COL_SHADOW);   // sombra
             g.fill(x,     y,     x + w,     y + h,     border);
             g.fill(x + 1, y + 1, x + w - 1, y + h - 1, bg);
+            g.fill(x + 1, y + 1, x + w - 1, y + 2,     COL_HIGHLIGHT); // realce
             int tc = hovered ? 0xFFFFFFFF : COL_TEXT;
             g.drawCenteredString(font, label, x + w / 2, y + (h - font.lineHeight) / 2, tc);
         }
