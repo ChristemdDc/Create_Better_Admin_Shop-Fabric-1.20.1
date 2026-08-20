@@ -7,7 +7,6 @@ import com.example.betteradminshop.block.ShopSlot;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
-import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -37,7 +36,8 @@ public class ShopBlockEntityRenderer implements BlockEntityRenderer<ShopBlockEnt
     /** Extra upward offset so items sit on top of the tray surface instead of inside it. */
     private static final float ITEM_Y_OFFSET = 1.5f / 16f;
     // Cached empty package stack — avoids allocating a new ItemStack every frame
-    private static final ItemStack PACKAGE_DISPLAY_STACK = PackageItem.containing(java.util.List.of());
+    private static final ItemStack PACKAGE_DISPLAY_STACK =
+            new ItemStack(com.example.betteradminshop.registry.ModItems.SHOP_PACKAGE.get());
 
     public ShopBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
         this.itemRenderer = Minecraft.getInstance().getItemRenderer();

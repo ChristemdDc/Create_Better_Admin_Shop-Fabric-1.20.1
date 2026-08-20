@@ -27,7 +27,9 @@ public class BetterAdminShop {
 
         // Register blocks, block entities, creative tab and sounds on the mod event bus
         ModBlocks.register(modBus);
+        com.example.betteradminshop.registry.ModItems.register();
         ModBlockEntities.register(modBus);
+        com.example.betteradminshop.registry.ModEntities.register(modBus);
         ModCreativeTab.register(modBus);
         ModSounds.register(modBus);
 

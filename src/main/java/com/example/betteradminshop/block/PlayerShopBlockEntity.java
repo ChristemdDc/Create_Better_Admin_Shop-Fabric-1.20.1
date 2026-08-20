@@ -354,6 +354,9 @@ public class PlayerShopBlockEntity extends BlockEntity {
         for (Map.Entry<Integer, Integer> e : order.getItems().entrySet()) {
             PlayerShopSlot slot = slots[e.getKey()];
             addMerged(required, slot.getPriceItem(), slot.getPriceAmount() * e.getValue());
+            if (slot.hasSecondPrice()) {
+                addMerged(required, slot.getPriceItem2(), slot.getPriceAmount2() * e.getValue());
+            }
         }
         for (Map.Entry<ItemStack, Integer> e : required.entrySet()) {
             if (countItemInInventory(player, e.getKey()) < e.getValue()) {
@@ -412,7 +415,9 @@ public class PlayerShopBlockEntity extends BlockEntity {
         DeliveryEntry next = deliveryQueue.peek();
         if (next != null) next.startProtection();
 
-        ItemStack box = PackageItem.containing(delivery.getItems());
+        // Paquete PROPIO: sin el límite de 9 stacks de las cajas de Create
+        ItemStack box = com.example.betteradminshop.item.ShopPackageItem.containing(
+                delivery.getItems(), level.registryAccess());
         if (!player.getInventory().add(box)) {
             ItemEntity ent = new ItemEntity(level, worldPosition.getX() + 0.5,
                     worldPosition.getY() + 1.0, worldPosition.getZ() + 0.5, box);
@@ -592,7 +597,8 @@ public class PlayerShopBlockEntity extends BlockEntity {
      * (o estar vacío el slot). count del saleItem = unidades por compra.
      */
     public String applySlotConfig(int slotIndex, ItemStack saleItem, ItemStack priceItem,
-                                  int priceAmount, int rotation) {
+                                  int priceAmount, ItemStack priceItem2, int priceAmount2,
+                                  int rotation) {
         PlayerShopSlot slot = getSlot(slotIndex);
         if (slot == null) return "invalid";
         if (!saleItem.isEmpty() && stock.countOf(saleItem.copyWithCount(1)) <= 0) {
@@ -602,9 +608,16 @@ public class PlayerShopBlockEntity extends BlockEntity {
         if (!saleItem.isEmpty() && (priceItem.isEmpty() || priceAmount < 1)) {
             return "no_price";
         }
+        // El segundo precio es opcional, pero si se pone debe ser un ítem
+        // DISTINTO del primero (si no, sería el mismo cobro partido en dos).
+        if (!priceItem2.isEmpty() && ItemStack.isSameItemSameComponents(priceItem, priceItem2)) {
+            return "dup_price";
+        }
         slot.setSaleItem(saleItem);
         slot.setPriceItem(priceItem);
         slot.setPriceAmount(priceAmount);
+        slot.setPriceItem2(priceItem2);
+        slot.setPriceAmount2(priceAmount2);
         slot.setRotation(rotation);
         setChanged();
         syncToClient();
@@ -745,6 +758,7 @@ public class PlayerShopBlockEntity extends BlockEntity {
             remaining -= n;
             // 9 stacks por cardboard (capacidad de un paquete de Create)
             if (pending.size() == 9 || remaining <= 0) {
+                // La purga SÍ usa cajas de Create: se emiten tantas como haga falta
                 exportBuffer.add(PackageItem.containing(pending));
                 pending = new ArrayList<>();
             }

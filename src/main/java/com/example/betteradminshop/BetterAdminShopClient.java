@@ -29,6 +29,8 @@ public final class BetterAdminShopClient {
                 ShopBlockEntityRenderer::new);
         event.registerBlockEntityRenderer(ModBlockEntities.PLAYER_SHOP_BLOCK_ENTITY.get(),
                 com.example.betteradminshop.client.PlayerShopRenderer::new);
+        event.registerEntityRenderer(com.example.betteradminshop.registry.ModEntities.SHOP_PACKAGE.get(),
+                com.example.betteradminshop.client.ShopPackageEntityRenderer::new);
         BetterAdminShop.LOGGER.info("{} client initialized.", BetterAdminShop.NAME);
     }
 

@@ -3,5 +3,7 @@
   "itemGroup.betteradminshop.main": "Create: Better Admin Shop",
   "key.categories.betteradminshop": "Create: Better Admin Shop",
   "key.betteradminshop.toggle_boxes": "Ocultar/mostrar recuadros de la tienda",
-  "block.betteradminshop.player_shop": "Tienda de Jugador"
+  "block.betteradminshop.player_shop": "Tienda de Jugador",
+  "item.betteradminshop.shop_package": "Paquete de Tienda",
+  "entity.betteradminshop.shop_package": "Paquete de Tienda"
 }

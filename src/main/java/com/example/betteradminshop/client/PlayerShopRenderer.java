@@ -7,7 +7,6 @@ import com.example.betteradminshop.block.ShopPart;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.math.Axis;
-import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -43,7 +42,8 @@ public class PlayerShopRenderer implements BlockEntityRenderer<PlayerShopBlockEn
     private static final float SELECT_BOX_HALF = 2.1f / 16f;
     /** Altura del ítem y del recuadro sobre la bandeja (compartida con el raycast). */
     private static final float ITEM_Y_OFFSET = PlayerShopBlockEntity.TRAY_Y_OFFSET;
-    private static final ItemStack PACKAGE_DISPLAY_STACK = PackageItem.containing(java.util.List.of());
+    private static final ItemStack PACKAGE_DISPLAY_STACK =
+            new ItemStack(com.example.betteradminshop.registry.ModItems.SHOP_PACKAGE.get());
 
     public PlayerShopRenderer(BlockEntityRendererProvider.Context context) {
         this.itemRenderer = Minecraft.getInstance().getItemRenderer();

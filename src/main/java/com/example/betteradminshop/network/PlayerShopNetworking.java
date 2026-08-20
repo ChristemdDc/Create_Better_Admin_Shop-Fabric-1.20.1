@@ -30,18 +30,44 @@ public final class PlayerShopNetworking {
     // ── Payloads ─────────────────────────────────────────────────────────────
 
     /** Configura ítem en venta (count = unidades por compra) + precio de un slot. */
+    /**
+     * Configura un slot de venta. Lleva DOS precios: el segundo es opcional
+     * (vacío = solo se cobra el primero). Codec escrito a mano porque
+     * {@code StreamCodec.composite} solo admite hasta 6 campos.
+     */
     public record SetSlot(BlockPos pos, int slot, ItemStack saleItem,
-                          ItemStack priceItem, int priceAmount, int rotation)
+                          ItemStack priceItem, int priceAmount,
+                          ItemStack priceItem2, int priceAmount2, int rotation)
             implements CustomPacketPayload {
         public static final Type<SetSlot> TYPE = new Type<>(BetterAdminShop.id("pshop_set_slot"));
-        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlot> STREAM_CODEC = StreamCodec.composite(
-                BlockPos.STREAM_CODEC, SetSlot::pos,
-                ByteBufCodecs.VAR_INT, SetSlot::slot,
-                ItemStack.OPTIONAL_STREAM_CODEC, SetSlot::saleItem,
-                ItemStack.OPTIONAL_STREAM_CODEC, SetSlot::priceItem,
-                ByteBufCodecs.VAR_INT, SetSlot::priceAmount,
-                ByteBufCodecs.VAR_INT, SetSlot::rotation,
-                SetSlot::new);
+        public static final StreamCodec<RegistryFriendlyByteBuf, SetSlot> STREAM_CODEC =
+                new StreamCodec<>() {
+                    @Override
+                    public SetSlot decode(RegistryFriendlyByteBuf buf) {
+                        BlockPos pos = BlockPos.STREAM_CODEC.decode(buf);
+                        int slot = buf.readVarInt();
+                        ItemStack saleItem = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        ItemStack priceItem = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int priceAmount = buf.readVarInt();
+                        ItemStack priceItem2 = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
+                        int priceAmount2 = buf.readVarInt();
+                        int rotation = buf.readVarInt();
+                        return new SetSlot(pos, slot, saleItem, priceItem, priceAmount,
+                                priceItem2, priceAmount2, rotation);
+                    }
+
+                    @Override
+                    public void encode(RegistryFriendlyByteBuf buf, SetSlot p) {
+                        BlockPos.STREAM_CODEC.encode(buf, p.pos());
+                        buf.writeVarInt(p.slot());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.saleItem());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.priceItem());
+                        buf.writeVarInt(p.priceAmount());
+                        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, p.priceItem2());
+                        buf.writeVarInt(p.priceAmount2());
+                        buf.writeVarInt(p.rotation());
+                    }
+                };
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
@@ -234,7 +260,7 @@ public final class PlayerShopNetworking {
         PlayerShopBlockEntity shop = managedShop(ctx, msg.pos());
         if (shop == null) return;
         String result = shop.applySlotConfig(msg.slot(), msg.saleItem(), msg.priceItem(),
-                msg.priceAmount(), msg.rotation());
+                msg.priceAmount(), msg.priceItem2(), msg.priceAmount2(), msg.rotation());
         if (ctx.player() instanceof ServerPlayer p) {
             if ("not_in_stock".equals(result)) {
                 p.displayClientMessage(Component.literal(
@@ -242,6 +268,9 @@ public final class PlayerShopNetworking {
             } else if ("no_price".equals(result)) {
                 p.displayClientMessage(Component.literal(
                         "§cDebes fijar un precio antes de poner el ítem a la venta."), true);
+            } else if ("dup_price".equals(result)) {
+                p.displayClientMessage(Component.literal(
+                        "§cLos dos precios deben ser ítems distintos."), true);
             }
         }
     }
@@ -332,8 +361,9 @@ public final class PlayerShopNetworking {
     // ── Helpers de envío (cliente) ───────────────────────────────────────────
 
     public static void sendSetSlot(BlockPos pos, int slot, ItemStack sale, ItemStack price,
-                                   int amount, int rotation) {
-        PacketDistributor.sendToServer(new SetSlot(pos, slot, sale, price, amount, rotation));
+                                   int amount, ItemStack price2, int amount2, int rotation) {
+        PacketDistributor.sendToServer(
+                new SetSlot(pos, slot, sale, price, amount, price2, amount2, rotation));
     }
 
     public static void sendClearSlot(BlockPos pos, int slot) {

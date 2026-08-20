@@ -1,7 +1,6 @@
 package com.example.betteradminshop.block;
 
 import com.example.betteradminshop.registry.ModBlockEntities;
-import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -363,7 +362,10 @@ public class ShopBlockEntity extends BlockEntity {
     }
 
     private ItemStack createCardboardBox(List<ItemStack> items) {
-        return PackageItem.containing(items);
+        // Paquete PROPIO: las cajas de Create se limitan a 9 stacks y recortaban
+        // las compras grandes.
+        return com.example.betteradminshop.item.ShopPackageItem.containing(
+                items, level.registryAccess());
     }
 
     private void dropItemAt(ItemStack stack, Vec3 pos) {

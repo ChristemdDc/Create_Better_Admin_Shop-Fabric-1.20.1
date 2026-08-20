@@ -161,24 +161,34 @@ public class ShopSlot {
     public boolean isCompra() { return type == Type.COMPRA; }
 
     public ItemStack getDisplayItem() { return saleItem; }
-    public void setDisplayItem(ItemStack item) { this.saleItem = item.copy(); }
+    /** El prototipo se guarda con count 1: la cantidad vive en sellAmount
+     *  (el codec de ItemStack solo admite counts 1..99 al serializar). */
+    public void setDisplayItem(ItemStack item) {
+        this.saleItem = item.isEmpty() ? ItemStack.EMPTY : item.copyWithCount(1);
+    }
 
     /** Ítem que debe renderizarse en el mostrador (override o el vendido). */
     public ItemStack getRenderItem() { return renderItem.isEmpty() ? saleItem : renderItem; }
     public ItemStack getRenderOverride() { return renderItem; }
     public boolean hasRenderOverride() { return !renderItem.isEmpty(); }
-    public void setRenderOverride(ItemStack item) { this.renderItem = item.copy(); }
+    public void setRenderOverride(ItemStack item) {
+        this.renderItem = item.isEmpty() ? ItemStack.EMPTY : item.copyWithCount(1);
+    }
 
     public int getSellAmount() { return sellAmount; }
     public void setSellAmount(int amount) { this.sellAmount = Math.max(1, amount); }
 
     public ItemStack getPriceItem() { return priceItem; }
-    public void setPriceItem(ItemStack item) { this.priceItem = item.copy(); }
+    public void setPriceItem(ItemStack item) {
+        this.priceItem = item.isEmpty() ? ItemStack.EMPTY : item.copyWithCount(1);
+    }
     public int getPriceAmount() { return priceAmount; }
     public void setPriceAmount(int amount) { this.priceAmount = Math.max(1, amount); }
 
     public ItemStack getPriceItem2() { return priceItem2; }
-    public void setPriceItem2(ItemStack item) { this.priceItem2 = item.copy(); }
+    public void setPriceItem2(ItemStack item) {
+        this.priceItem2 = item.isEmpty() ? ItemStack.EMPTY : item.copyWithCount(1);
+    }
     public int getPriceAmount2() { return priceAmount2; }
     public void setPriceAmount2(int amount) { this.priceAmount2 = Math.max(1, amount); }
     public boolean hasSecondPrice() { return !priceItem2.isEmpty(); }

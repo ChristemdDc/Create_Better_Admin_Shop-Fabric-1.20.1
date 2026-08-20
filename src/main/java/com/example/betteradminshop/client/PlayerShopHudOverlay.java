@@ -89,7 +89,9 @@ public class PlayerShopHudOverlay implements LayeredDraw.Layer {
         boolean closed = !be.isOperational(now);
 
         int headerH = PAD + ICON + PAD + LINE_H;         // ítem + dueño
-        int priceH  = PAD + LINE_H + (ICON + 2) + PAD / 2;
+        // El segundo precio (opcional) añade otra fila de ícono al panel.
+        boolean twoPrices = slot.hasSecondPrice();
+        int priceH  = PAD + LINE_H + (ICON + 2) * (twoPrices ? 2 : 1) + PAD / 2;
         int stockH  = PAD / 2 + LINE_H + (closed ? LINE_H : 0) + PAD;
         int totalH  = headerH + 1 + priceH + 1 + stockH;
 
@@ -129,15 +131,16 @@ public class PlayerShopHudOverlay implements LayeredDraw.Layer {
         ItemStack price = slot.getPriceItem();
         if (price.isEmpty()) {
             g.drawString(font, "✖ Sin precio — no disponible", contentX, cy + 4, COL_OUT, false);
+            cy += ICON + 2 + PAD / 2;
         } else {
-            g.fill(contentX - 1, cy - 1, contentX + ICON + 1, cy + ICON + 1, 0x552A2A40);
-            g.renderItem(price, contentX, cy);
-            String label = clip(font, slot.getPriceAmount() + "× " + price.getHoverName().getString(),
-                    W - 2 - PAD - ICON - 4 - PAD);
-            g.drawString(font, label, contentX + ICON + 4,
-                    cy + (ICON - font.lineHeight) / 2, COL_PRICE, false);
+            cy = drawPriceRow(g, font, contentX, cy, price, slot.getPriceAmount(), "");
+            if (twoPrices) {
+                // "+" al frente para dejar claro que se pagan LOS DOS, no uno u otro.
+                cy = drawPriceRow(g, font, contentX, cy,
+                        slot.getPriceItem2(), slot.getPriceAmount2(), "+ ");
+            }
+            cy += PAD / 2;
         }
-        cy += ICON + 2 + PAD / 2;
 
         g.fill(px + 2, cy, px + W, cy + 1, COL_SEP);
         cy += 1 + PAD / 2;
@@ -161,6 +164,18 @@ public class PlayerShopHudOverlay implements LayeredDraw.Layer {
             cy += LINE_H;
             g.drawString(font, "⚠ CERRADA — renta pendiente", contentX, cy, COL_OUT, false);
         }
+    }
+
+    /** Dibuja una fila de precio (ícono + "N× nombre") y devuelve la Y siguiente. */
+    private int drawPriceRow(GuiGraphics g, Font font, int contentX, int cy,
+                             ItemStack price, int amount, String prefix) {
+        g.fill(contentX - 1, cy - 1, contentX + ICON + 1, cy + ICON + 1, 0x552A2A40);
+        g.renderItem(price, contentX, cy);
+        String label = clip(font, prefix + amount + "× " + price.getHoverName().getString(),
+                W - 2 - PAD - ICON - 4 - PAD);
+        g.drawString(font, label, contentX + ICON + 4,
+                cy + (ICON - font.lineHeight) / 2, COL_PRICE, false);
+        return cy + ICON + 2;
     }
 
     // ── Panel de entrega ─────────────────────────────────────────────────────
@@ -217,6 +232,6 @@ public class PlayerShopHudOverlay implements LayeredDraw.Layer {
     /** Icono de cardboard compartido (cacheado, no alocar cada frame). */
     static final class PlayerShopRendererIcons {
         static final ItemStack PACKAGE_ICON =
-                com.simibubi.create.content.logistics.box.PackageItem.containing(java.util.List.of());
+                new ItemStack(com.example.betteradminshop.registry.ModItems.SHOP_PACKAGE.get());
     }
 }

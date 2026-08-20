@@ -448,6 +448,9 @@ public class PlayerShopBlock extends BaseEntityBlock implements IWrenchable {
                     slot.getSaleItem().getHoverName().getString() + " x" + units)
                     .withStyle(s -> s.withItalic(false)));
             mergeCost(totalCost, slot.getPriceItem(), slot.getPriceAmount() * e.getValue());
+            if (slot.hasSecondPrice()) {
+                mergeCost(totalCost, slot.getPriceItem2(), slot.getPriceAmount2() * e.getValue());
+            }
         }
         if (!totalCost.isEmpty()) {
             lines.add(Component.literal("").withStyle(s -> s.withItalic(false)));

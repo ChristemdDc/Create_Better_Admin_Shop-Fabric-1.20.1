@@ -80,12 +80,16 @@ public class PlayerShopMenuScreen extends Screen {
     private boolean priceOverlay = false;
     private int priceTargetSlot = -1;
     private ItemStack priceSelected = ItemStack.EMPTY;
+    /** Segundo precio, OPCIONAL: si se pone, el comprador paga ambos ítems. */
+    private ItemStack priceSelected2 = ItemStack.EMPTY;
+    /** Fila de precio (0 o 1) a la que van las selecciones del grid. */
+    private int priceEditIndex = 0;
     /**
      * Ítem elegido en PICK_ITEM cuando el slot AÚN no tiene precio: se aplica
      * junto con el precio al confirmar el overlay (nada se vende gratis).
      */
     private ItemStack pendingSale = ItemStack.EMPTY;
-    private Field priceSearchField, priceAmountField;
+    private Field priceSearchField, priceAmountField, priceAmountField2;
     private final List<ItemStack> priceAll = new ArrayList<>();
     private final List<ItemStack> priceFiltered = new ArrayList<>();
     private int priceScroll = 0;
@@ -100,6 +104,8 @@ public class PlayerShopMenuScreen extends Screen {
     private static ItemStack clipSale = ItemStack.EMPTY;
     private static ItemStack clipPrice = ItemStack.EMPTY;
     private static int clipPriceAmount = 1;
+    private static ItemStack clipPrice2 = ItemStack.EMPTY;
+    private static int clipPriceAmount2 = 1;
     /** La rotación viaja con el producto al copiar/pegar. */
     private static int clipRotation = 0;
 
@@ -159,6 +165,8 @@ public class PlayerShopMenuScreen extends Screen {
         priceSearchField = new Field(40);
         priceAmountField = new Field(5);
         priceAmountField.set("1");
+        priceAmountField2 = new Field(5);
+        priceAmountField2.set("1");
         managerField = new Field(16);
 
         // Ítems survival para el selector de precio
@@ -352,14 +360,29 @@ public class PlayerShopMenuScreen extends Screen {
                     g.renderItem(slot.getPriceItem(), 0, 0);
                     g.pose().popPose();
                     g.drawString(font, "×" + slot.getPriceAmount(), x + 18, y + 28, COL_GOLD, false);
+                    // Con dos precios no cabe el segundo ícono: se marca con "+"
+                    // y el detalle completo va en el tooltip.
+                    if (slot.hasSecondPrice()) {
+                        g.drawString(font, "+", x + SLOT_SIZE - 9, y + 28, COL_GOLD, true);
+                    }
                 }
                 int stockAvail = shop.stockFor(slotIndex);
                 if (stockAvail < slot.getSellAmount()) {
                     g.fill(x + 1, y + 1, x + SLOT_SIZE - 1, y + SLOT_SIZE - 1, 0x66FF0000);
                 }
                 if (hov && !dragging) {
-                    tooltip(slot.getSellAmount() + "× " + slot.getSaleItem().getHoverName().getString()
-                            + " · Stock: " + stockAvail + " · arrastra para mover", mx, my);
+                    StringBuilder tip = new StringBuilder(slot.getSellAmount() + "× "
+                            + slot.getSaleItem().getHoverName().getString());
+                    if (!slot.getPriceItem().isEmpty()) {
+                        tip.append(" · Precio: ").append(slot.getPriceAmount()).append("× ")
+                           .append(slot.getPriceItem().getHoverName().getString());
+                        if (slot.hasSecondPrice()) {
+                            tip.append(" + ").append(slot.getPriceAmount2()).append("× ")
+                               .append(slot.getPriceItem2().getHoverName().getString());
+                        }
+                    }
+                    tip.append(" · Stock: ").append(stockAvail).append(" · arrastra para mover");
+                    tooltip(tip.toString(), mx, my);
                 }
             } else if (slot == null || slot.isEmpty()) {
                 g.drawCenteredString(font, "+", x + SLOT_SIZE / 2, y + SLOT_SIZE / 2 - 4, COL_CREAM_DIM);
@@ -559,7 +582,7 @@ public class PlayerShopMenuScreen extends Screen {
 
     // ── Overlay PICK_PRICE (compacto, no ocupa toda la pantalla) ─────────────
 
-    private static final int PW = 330, PH = 214;
+    private static final int PW = 330, PH = 252;
 
     private void renderPriceOverlay(GuiGraphics g, int mx, int my) {
         g.fill(0, 0, width, height, 0x99000000);
@@ -606,18 +629,14 @@ public class PlayerShopMenuScreen extends Screen {
             g.fill(sbX, thumbY, sbX + 4, thumbY + thumbH, COL_ACCENT);
         }
 
-        // Selección + cantidad, bien ilustrado
-        int iy = py + PH - 60;
-        g.fill(px + 8, iy, px + PW - 8, iy + 30, COL_PANEL);
-        border(g, px + 8, iy, PW - 16, 30, COL_BORDER);
-        if (priceSelected.isEmpty()) {
-            g.drawString(font, "Elige el ítem que cobrarás", px + 16, iy + 11, COL_CREAM_DIM, false);
-        } else {
-            g.renderItem(priceSelected, px + 14, iy + 7);
-            g.drawString(font, priceSelected.getHoverName().getString(), px + 34, iy + 11, COL_CREAM, false);
-        }
-        g.drawString(font, "Cantidad:", px + PW - 150, iy + 11, COL_CREAM_DIM, false);
-        priceAmountField.draw(g, font, px + PW - 96, iy + 7, 40, 16);
+        // Pista de uso: el grid rellena la fila activa
+        g.drawString(font, "Clic en una fila para elegir qué precio editas.",
+                px + 10, py + 128, COL_CREAM_DIM, false);
+
+        // Dos filas de precio: la 2ª es opcional y se cobra ADEMÁS de la 1ª
+        int row1Y = priceRowY(py, 0), row2Y = priceRowY(py, 1);
+        drawPriceRow(g, px, row1Y, 0, priceSelected, priceAmountField, mx, my);
+        drawPriceRow(g, px, row2Y, 1, priceSelected2, priceAmountField2, mx, my);
 
         // Confirmar / cancelar
         int byy = py + PH - 24;
@@ -629,6 +648,53 @@ public class PlayerShopMenuScreen extends Screen {
         boolean hovNo = in(mx, my, px + 10, byy, 80, 16);
         g.fill(px + 10, byy, px + 90, byy + 16, hovNo ? COL_ACCENT_DARK : COL_PANEL);
         g.drawCenteredString(font, "Cancelar", px + 50, byy + 4, COL_CREAM);
+    }
+
+    // Geometría compartida por el render y los clics de las filas de precio
+    private static final int PROW_H = 30;
+    private static int priceRowY(int py, int index) { return py + PH - 98 + index * (PROW_H + 4); }
+    private static int priceRowX(int px) { return px + 58; }
+    private static int priceRowW() { return PW - 66; }
+
+    /**
+     * Una fila de precio: etiqueta + ítem + cantidad. La fila ACTIVA
+     * ({@link #priceEditIndex}) es la que recibe lo que se elija en el grid.
+     * La fila 2 lleva además un botón para quitar el precio.
+     */
+    private void drawPriceRow(GuiGraphics g, int px, int iy, int index,
+                              ItemStack sel, Field amountField, int mx, int my) {
+        boolean active = priceEditIndex == index;
+        int bx = priceRowX(px), bw = priceRowW();
+
+        g.drawString(font, "Precio " + (index + 1), px + 12, iy + 6,
+                active ? COL_GOLD : COL_CREAM_DIM, false);
+        if (index == 1) {
+            g.drawString(font, "§8opcional", px + 12, iy + 17, COL_CREAM_DIM, false);
+        }
+
+        g.fill(bx, iy, bx + bw, iy + PROW_H, COL_PANEL);
+        border(g, bx, iy, bw, PROW_H, active ? COL_GOLD : COL_BORDER);
+
+        if (sel.isEmpty()) {
+            String hint = index == 0 ? "Elige el ítem que cobrarás"
+                                     : "Sin segundo precio";
+            g.drawString(font, hint, bx + 8, iy + 11, COL_CREAM_DIM, false);
+        } else {
+            g.renderItem(sel, bx + 6, iy + 7);
+            String name = font.plainSubstrByWidth(sel.getHoverName().getString(), bw - 150);
+            g.drawString(font, name, bx + 26, iy + 11, COL_CREAM, false);
+        }
+
+        g.drawString(font, "Cant:", px + PW - 140, iy + 11, COL_CREAM_DIM, false);
+        amountField.draw(g, font, px + PW - 108, iy + 7, 40, 16);
+
+        if (index == 1 && !sel.isEmpty()) {
+            boolean hov = in(mx, my, px + PW - 58, iy + 7, 16, 16);
+            g.fill(px + PW - 58, iy + 7, px + PW - 42, iy + 23,
+                    hov ? COL_ACCENT : COL_INNER);
+            g.drawCenteredString(font, "✖", px + PW - 50, iy + 11, COL_CREAM);
+            if (hov) tooltip("Quitar el segundo precio", mx, my);
+        }
     }
 
     // ── Vista MANAGERS ───────────────────────────────────────────────────────
@@ -847,6 +913,9 @@ public class PlayerShopMenuScreen extends Screen {
                 priceTargetSlot = slot;
                 priceSelected = s.getPriceItem().copyWithCount(1);
                 priceAmountField.set(String.valueOf(s.getPriceAmount()));
+                priceSelected2 = s.getPriceItem2().copyWithCount(1);
+                priceAmountField2.set(String.valueOf(s.getPriceAmount2()));
+                priceEditIndex = 0;
                 priceSearchField.set("");
                 filterPrice("");
                 priceScroll = 0;
@@ -866,9 +935,11 @@ public class PlayerShopMenuScreen extends Screen {
             }
             case 4 -> { // Copiar
                 if (!s.isEmpty()) {
-                    clipSale = s.getSaleItem().copy();
+                    clipSale = s.getSaleItem().copyWithCount(s.getSellAmount());
                     clipPrice = s.getPriceItem().copy();
                     clipPriceAmount = s.getPriceAmount();
+                    clipPrice2 = s.getPriceItem2().copy();
+                    clipPriceAmount2 = s.getPriceAmount2();
                     clipRotation = s.getRotation();
                     msg("§aSlot copiado.");
                 }
@@ -876,10 +947,12 @@ public class PlayerShopMenuScreen extends Screen {
             case 5 -> { // Pegar
                 if (!clipSale.isEmpty()) {
                     PlayerShopNetworking.sendSetSlot(shopPos, slot, clipSale, clipPrice,
-                            clipPriceAmount, clipRotation);
+                            clipPriceAmount, clipPrice2, clipPriceAmount2, clipRotation);
                     s.setSaleItem(clipSale);
                     s.setPriceItem(clipPrice);
                     s.setPriceAmount(clipPriceAmount);
+                    s.setPriceItem2(clipPrice2);
+                    s.setPriceAmount2(clipPriceAmount2);
                     s.setRotation(clipRotation);
                 }
             }
@@ -960,9 +1033,10 @@ public class PlayerShopMenuScreen extends Screen {
                 PlayerShopSlot s = shop.getSlot(pickTargetSlot);
                 ItemStack sale = pickSelected.copyWithCount(amt);
                 if (s != null && !s.getPriceItem().isEmpty()) {
-                    // Ya tiene precio → aplicar de una (conserva su rotación)
+                    // Ya tiene precio(s) → aplicar de una (conserva rotación)
                     PlayerShopNetworking.sendSetSlot(shopPos, pickTargetSlot, sale,
-                            s.getPriceItem(), s.getPriceAmount(), s.getRotation());
+                            s.getPriceItem(), s.getPriceAmount(),
+                            s.getPriceItem2(), s.getPriceAmount2(), s.getRotation());
                     s.setSaleItem(sale); // reflejo inmediato
                     view = View.MAIN;
                 } else {
@@ -972,6 +1046,9 @@ public class PlayerShopMenuScreen extends Screen {
                     priceTargetSlot = pickTargetSlot;
                     priceSelected = ItemStack.EMPTY;
                     priceAmountField.set("1");
+                    priceSelected2 = ItemStack.EMPTY;
+                    priceAmountField2.set("1");
+                    priceEditIndex = 0;
                     priceSearchField.set("");
                     filterPrice("");
                     priceScroll = 0;
@@ -997,37 +1074,74 @@ public class PlayerShopMenuScreen extends Screen {
         if (in(mx, my, gx, gy, cols * cell, rows * cell)) {
             int idx = priceScroll * cols + ((my - gy) / cell) * cols + (mx - gx) / cell;
             if (idx >= 0 && idx < priceFiltered.size()) {
-                priceSelected = priceFiltered.get(idx).copyWithCount(1);
+                ItemStack chosen = priceFiltered.get(idx).copyWithCount(1);
+                // Los dos precios deben ser ítems distintos: si fuera el mismo,
+                // sería un único cobro partido en dos.
+                ItemStack other = priceEditIndex == 0 ? priceSelected2 : priceSelected;
+                if (!other.isEmpty() && ItemStack.isSameItemSameComponents(other, chosen)) {
+                    msg("§eLos dos precios deben ser ítems distintos.");
+                } else if (priceEditIndex == 0) {
+                    priceSelected = chosen;
+                } else {
+                    priceSelected2 = chosen;
+                }
             }
             return true;
         }
 
-        int iy = py + PH - 60;
-        if (in(mx, my, px + PW - 96, iy + 7, 40, 16)) {
-            priceAmountField.focus(true);
-            return true;
+        // Filas de precio: seleccionar la activa, enfocar cantidad, quitar la 2ª
+        for (int i = 0; i < 2; i++) {
+            int iy = priceRowY(py, i);
+            Field amountField = i == 0 ? priceAmountField : priceAmountField2;
+            if (i == 1 && !priceSelected2.isEmpty()
+                    && in(mx, my, px + PW - 58, iy + 7, 16, 16)) {
+                priceSelected2 = ItemStack.EMPTY;
+                priceAmountField2.set("1");
+                priceEditIndex = 1;
+                return true;
+            }
+            if (in(mx, my, px + PW - 108, iy + 7, 40, 16)) {
+                priceEditIndex = i;
+                amountField.focus(true);
+                (i == 0 ? priceAmountField2 : priceAmountField).focus(false);
+                return true;
+            }
+            if (in(mx, my, px + 10, iy, PW - 20, PROW_H)) {
+                priceEditIndex = i;
+                priceAmountField.focus(false);
+                priceAmountField2.focus(false);
+                return true;
+            }
         }
         priceAmountField.focus(false);
+        priceAmountField2.focus(false);
 
         int byy = py + PH - 24;
         if (!priceSelected.isEmpty() && in(mx, my, px + PW - 110, byy, 100, 16)) {
             int amt = Math.max(1, parseInt(priceAmountField.get(), 1));
+            int amt2 = Math.max(1, parseInt(priceAmountField2.get(), 1));
             PlayerShopSlot s = shop.getSlot(priceTargetSlot);
             if (!pendingSale.isEmpty()) {
                 // Ítem nuevo + precio: se aplican JUNTOS (nada gratis)
                 PlayerShopNetworking.sendSetSlot(shopPos, priceTargetSlot,
-                        pendingSale, priceSelected, amt, s == null ? 0 : s.getRotation());
+                        pendingSale, priceSelected, amt, priceSelected2, amt2,
+                        s == null ? 0 : s.getRotation());
                 if (s != null) {
                     s.setSaleItem(pendingSale); // reflejo inmediato
                     s.setPriceItem(priceSelected);
                     s.setPriceAmount(amt);
+                    s.setPriceItem2(priceSelected2);
+                    s.setPriceAmount2(amt2);
                 }
                 pendingSale = ItemStack.EMPTY;
             } else if (s != null && !s.isEmpty()) {
                 PlayerShopNetworking.sendSetSlot(shopPos, priceTargetSlot,
-                        s.getSaleItem(), priceSelected, amt, s.getRotation());
+                        s.getSaleItem().copyWithCount(s.getSellAmount()),
+                        priceSelected, amt, priceSelected2, amt2, s.getRotation());
                 s.setPriceItem(priceSelected); // reflejo inmediato
                 s.setPriceAmount(amt);
+                s.setPriceItem2(priceSelected2);
+                s.setPriceAmount2(amt2);
             }
             priceOverlay = false;
             return true;
@@ -1158,6 +1272,7 @@ public class PlayerShopMenuScreen extends Screen {
         if (priceOverlay) {
             if (priceSearchField.key(key)) { filterPrice(priceSearchField.get()); return true; }
             if (priceAmountField.key(key)) return true;
+            if (priceAmountField2.key(key)) return true;
         } else if (view == View.PICK_ITEM && sellAmountField.key(key)) {
             return true;
         } else if (view == View.MANAGERS) {
@@ -1182,6 +1297,7 @@ public class PlayerShopMenuScreen extends Screen {
         if (priceOverlay) {
             if (priceSearchField.type(c)) { filterPrice(priceSearchField.get()); return true; }
             if (priceAmountField.type(c)) return true;
+            if (priceAmountField2.type(c)) return true;
         } else if (view == View.PICK_ITEM && sellAmountField.type(c)) {
             return true;
         } else if (view == View.MANAGERS && managerField.type(c)) {

@@ -4,7 +4,6 @@ import com.example.betteradminshop.block.DeliveryEntry;
 import com.example.betteradminshop.block.ShopBlock;
 import com.example.betteradminshop.block.ShopBlockEntity;
 import com.example.betteradminshop.block.ShopPart;
-import com.simibubi.create.content.logistics.box.PackageItem;
 
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -34,7 +33,8 @@ import java.util.List;
 public class EntregaHudOverlay implements LayeredDraw.Layer {
 
     // Cached package icon – same approach as ShopBlockEntityRenderer
-    static final ItemStack PACKAGE_ICON = PackageItem.containing(java.util.List.of());
+    static final ItemStack PACKAGE_ICON =
+            new ItemStack(com.example.betteradminshop.registry.ModItems.SHOP_PACKAGE.get());
 
     // ── Panel colors (same palette as ShopAdminScreen) ────────────────────────
     private static final int COL_BG         = 0xD4181825;
