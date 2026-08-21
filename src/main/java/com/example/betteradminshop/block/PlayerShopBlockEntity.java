@@ -3,15 +3,22 @@ package com.example.betteradminshop.block;
 import com.example.betteradminshop.registry.ModBlockEntities;
 import com.simibubi.create.content.logistics.box.PackageItem;
 
+import com.example.betteradminshop.data.MongoDriver;
+import com.example.betteradminshop.data.MongoStore;
+import com.example.betteradminshop.data.PurchaseDatabase;
+import com.example.betteradminshop.data.ShopAlerts;
+
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.item.ItemEntity;
@@ -38,7 +45,9 @@ import java.util.UUID;
  *  - Solo VENDE, con un único ítem de precio por slot.
  *  - El stock NO es infinito: sale del {@link StockInventory} (16 slots con
  *    mejoras de capacidad), que se alimenta por el chute de import.
- *  - Lo recaudado va al buffer de EXPORT (se extrae por el chute de export).
+ *  - Lo recaudado va al buffer de EXPORT (se extrae por el chute de export),
+ *    con un TOPE de {@link #EXPORT_CAPACITY} huecos: si el dueño no lo vacía la
+ *    tienda deja de vender (y no crece el NBT del bloque sin control).
  *  - Estantes mejorables: 2→3→4 slots por lado (propiedades del blockstate
  *    left_tier / right_tier controlan qué subgrupo del modelo se renderiza).
  *  - Renta: la tienda solo opera si la cuota (configurada por administración)
@@ -94,8 +103,22 @@ public class PlayerShopBlockEntity extends BlockEntity {
     private final PlayerShopSlot[] slots = new PlayerShopSlot[TOTAL_SLOTS];
     private final StockInventory stock = new StockInventory();
 
+    /**
+     * Huecos del buffer de recaudación (equivalente a un cofre doble). Sin este
+     * tope, una tienda que nadie vacía hace crecer su NBT sin límite: con
+     * cientos de tiendas eso engorda el guardado del mundo y cada sync al
+     * cliente. Al llenarse, la tienda rechaza compras en vez de acumular.
+     */
+    public static final int EXPORT_CAPACITY = 64;
+
+    /** Espera mínima entre avisos de "recaudación llena" al dueño. */
+    private static final long FULL_WARN_INTERVAL_MS = 10L * 60L * 1000L;
+
     /** Recaudación pendiente de extracción por el chute de export. */
     private final List<ItemStack> exportBuffer = new ArrayList<>();
+
+    /** Último aviso de recaudación llena. Transitorio: no se guarda en NBT. */
+    private transient long lastFullWarnMs = 0L;
 
     /** Entregas pendientes en el depot (cardboards) — misma protección que admin. */
     private final Deque<DeliveryEntry> deliveryQueue = new ArrayDeque<>();
@@ -233,18 +256,39 @@ public class PlayerShopBlockEntity extends BlockEntity {
 
     public List<ItemStack> getExportBuffer() { return exportBuffer; }
 
+    /** Huecos libres en el buffer de recaudación. */
+    public int exportFreeSlots() {
+        return Math.max(0, EXPORT_CAPACITY - exportBuffer.size());
+    }
+
+    public boolean isExportFull() {
+        return exportBuffer.size() >= EXPORT_CAPACITY;
+    }
+
+    /** Tamaño de stack utilizable en el buffer (el codec no admite >99). */
+    private static int exportStackSize(ItemStack proto) {
+        return Math.max(1, Math.min(proto.getMaxStackSize(), 99));
+    }
+
+    /**
+     * Huecos NUEVOS que ocuparían {@code units} unidades, contando lo que cabe
+     * en los stacks parciales que ya hay de ese mismo ítem.
+     */
+    private int newSlotsNeeded(ItemStack proto, int units) {
+        int max = exportStackSize(proto);
+        int remaining = units;
+        for (ItemStack s : exportBuffer) {
+            if (remaining <= 0) break;
+            if (s.getCount() >= max || !ItemStack.isSameItemSameComponents(s, proto)) continue;
+            remaining -= Math.min(max - s.getCount(), remaining);
+        }
+        return (remaining + max - 1) / max;
+    }
+
     /** Encola ítems para salir por el chute de export (recaudación, purgas). */
     public void enqueueExport(ItemStack stack) {
         if (stack.isEmpty()) return;
-        // dividir ≤ maxStackSize para no romper el codec de ItemStack al guardar
-        int remaining = stack.getCount();
-        int max = Math.max(1, Math.min(stack.getMaxStackSize(), 99));
-        while (remaining > 0) {
-            int n = Math.min(remaining, max);
-            exportBuffer.add(stack.copyWithCount(n));
-            remaining -= n;
-        }
-        setChanged();
+        enqueueExportUnits(stack.copyWithCount(1), stack.getCount());
     }
 
     // ── Renta ────────────────────────────────────────────────────────────────
@@ -358,6 +402,16 @@ public class PlayerShopBlockEntity extends BlockEntity {
                 addMerged(required, slot.getPriceItem2(), slot.getPriceAmount2() * e.getValue());
             }
         }
+        // La recaudación tiene tope: si no cabe el cobro, NO se cobra nada.
+        int exportNeeded = 0;
+        for (Map.Entry<ItemStack, Integer> e : required.entrySet()) {
+            exportNeeded += newSlotsNeeded(e.getKey(), e.getValue());
+        }
+        if (exportBuffer.size() + exportNeeded > EXPORT_CAPACITY) {
+            warnExportFull();
+            return "full";
+        }
+
         for (Map.Entry<ItemStack, Integer> e : required.entrySet()) {
             if (countItemInInventory(player, e.getKey()) < e.getValue()) {
                 return "pay:" + e.getKey().getHoverName().getString();
@@ -392,10 +446,135 @@ public class PlayerShopBlockEntity extends BlockEntity {
             enqueueExportUnits(e.getKey(), e.getValue());
         }
 
+        logSale(player, order);
+        notifyStockDepleted(order);
+
         clearOrder(playerId);
         setChanged();
         syncToClient();
         return null;
+    }
+
+    // ── Registro de ventas ───────────────────────────────────────────────────
+
+    /**
+     * Registra la venta en SQLite (autoritativa) y la espeja a Mongo si está
+     * activo. Ambas escrituras son ASÍNCRONAS: aquí solo se encolan, el tick
+     * del servidor no espera a disco ni a red.
+     */
+    private void logSale(ServerPlayer player, ShopOrder order) {
+        String transactionId = UUID.randomUUID().toString();
+        long now = System.currentTimeMillis();
+        String worldKey = (level != null) ? level.dimension().location().toString() : "unknown";
+        String buyerUuid = player.getUUID().toString();
+        String buyerName = player.getName().getString();
+        String owner = ownerName == null ? "" : ownerName;
+
+        for (Map.Entry<Integer, Integer> e : order.getItems().entrySet()) {
+            int slotIndex = e.getKey();
+            PlayerShopSlot slot = getSlot(slotIndex);
+            if (slot == null || slot.isEmpty()) continue;
+            int bundles = e.getValue();
+            int totalUnits = bundles * slot.getSellAmount();
+            ItemStack item = slot.getSaleItem();
+            String itemId = BuiltInRegistries.ITEM.getKey(item.getItem()).toString();
+            String itemName = item.getHoverName().getString();
+            String priceSummary = buildSlotPriceSummary(slot, bundles);
+
+            PurchaseDatabase.getInstance().logTransaction(
+                    PurchaseDatabase.TYPE_VENTA, transactionId, buyerUuid, buyerName,
+                    itemId, itemName, totalUnits, priceSummary, now, worldPosition, worldKey,
+                    owner);
+
+            if (MongoDriver.AVAILABLE) {
+                MongoStore.getInstance().logTransaction(
+                        PurchaseDatabase.TYPE_VENTA, transactionId, slotIndex,
+                        buyerUuid, buyerName, itemId, itemName, totalUnits,
+                        buildPriceLines(slot, bundles), priceSummary, now, worldKey, worldPosition,
+                        owner);
+            }
+        }
+    }
+
+    /** Resumen del precio de un slot para {@code bundles} compras. */
+    private static String buildSlotPriceSummary(PlayerShopSlot slot, int bundles) {
+        StringBuilder sb = new StringBuilder();
+        if (!slot.getPriceItem().isEmpty()) {
+            sb.append(slot.getPriceAmount() * bundles).append("× ")
+              .append(slot.getPriceItem().getHoverName().getString());
+        }
+        if (slot.hasSecondPrice()) {
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(slot.getPriceAmount2() * bundles).append("× ")
+              .append(slot.getPriceItem2().getHoverName().getString());
+        }
+        return sb.toString();
+    }
+
+    /** Desglose del precio como líneas estructuradas (para Mongo). */
+    private static List<MongoStore.PriceLine> buildPriceLines(PlayerShopSlot slot, int bundles) {
+        List<MongoStore.PriceLine> lines = new ArrayList<>();
+        if (!slot.getPriceItem().isEmpty()) {
+            lines.add(new MongoStore.PriceLine(
+                    BuiltInRegistries.ITEM.getKey(slot.getPriceItem().getItem()).toString(),
+                    slot.getPriceItem().getHoverName().getString(),
+                    slot.getPriceAmount() * bundles));
+        }
+        if (slot.hasSecondPrice()) {
+            lines.add(new MongoStore.PriceLine(
+                    BuiltInRegistries.ITEM.getKey(slot.getPriceItem2().getItem()).toString(),
+                    slot.getPriceItem2().getHoverName().getString(),
+                    slot.getPriceAmount2() * bundles));
+        }
+        return lines;
+    }
+
+    // ── Avisos al dueño ──────────────────────────────────────────────────────
+
+    /** "tienda en (x, y, z)" para los mensajes. */
+    private String posLabel() {
+        return "(" + worldPosition.getX() + ", " + worldPosition.getY()
+                + ", " + worldPosition.getZ() + ")";
+    }
+
+    /**
+     * Avisa al dueño de los productos que esta compra dejó a cero.
+     *
+     * Se detecta por TRANSICIÓN (antes de vender había stock, ahora no), así
+     * que no puede repetirse hasta que alguien reponga: sin sondeos, sin tick
+     * y sin riesgo de spam.
+     */
+    private void notifyStockDepleted(ShopOrder order) {
+        if (ownerId == null || !(level instanceof ServerLevel serverLevel)) return;
+        MinecraftServer server = serverLevel.getServer();
+        if (server == null) return;
+
+        List<String> agotados = new ArrayList<>();
+        for (Map.Entry<Integer, Integer> e : order.getItems().entrySet()) {
+            PlayerShopSlot slot = getSlot(e.getKey());
+            if (slot == null || slot.isEmpty()) continue;
+            if (stockFor(e.getKey()) > 0) continue;
+            String name = slot.getSaleItem().getHoverName().getString();
+            if (!agotados.contains(name)) agotados.add(name);
+        }
+        if (agotados.isEmpty()) return;
+
+        ShopAlerts.notifyOwner(server, ownerId,
+                "§e[Tu tienda] §fSe agotó §6" + String.join("§f, §6", agotados)
+                + " §fen la tienda de " + posLabel() + " §7— repón el stock para seguir vendiendo.");
+    }
+
+    /** Avisa (como mucho cada 10 min) de que la recaudación no admite más. */
+    private void warnExportFull() {
+        long now = System.currentTimeMillis();
+        if (now - lastFullWarnMs < FULL_WARN_INTERVAL_MS) return;
+        lastFullWarnMs = now;
+        if (ownerId == null || !(level instanceof ServerLevel serverLevel)) return;
+        MinecraftServer server = serverLevel.getServer();
+        if (server == null) return;
+        ShopAlerts.notifyOwner(server, ownerId,
+                "§c[Tu tienda] §fLa recaudación de la tienda en " + posLabel()
+                + " §festá llena y ya no puede vender §7— vacíala por el chute de export.");
     }
 
     /**
@@ -462,17 +641,41 @@ public class PlayerShopBlockEntity extends BlockEntity {
         }
     }
 
-    /** Encola unidades para el export dividiendo en stacks válidos. */
-    public void enqueueExportUnits(ItemStack proto, int units) {
-        if (proto.isEmpty() || units <= 0) return;
+    /**
+     * Encola unidades para el export dividiendo en stacks válidos, respetando
+     * {@link #EXPORT_CAPACITY}. Quien vaya a cobrar debe comprobar el hueco
+     * ANTES (ver {@link #processPurchase}); este tope es la última defensa.
+     *
+     * @return unidades que NO cupieron (0 si entró todo).
+     */
+    public int enqueueExportUnits(ItemStack proto, int units) {
+        if (proto.isEmpty() || units <= 0) return 0;
+        int max = exportStackSize(proto);
         int remaining = units;
-        int max = Math.max(1, Math.min(proto.getMaxStackSize(), 99));
-        while (remaining > 0) {
+
+        // 1) rellenar stacks parciales del mismo ítem — sin esto, cobrar de a
+        //    una unidad gastaría un hueco por venta y el tope llegaría enseguida.
+        for (int i = 0; i < exportBuffer.size() && remaining > 0; i++) {
+            ItemStack s = exportBuffer.get(i);
+            if (s.getCount() >= max || !ItemStack.isSameItemSameComponents(s, proto)) continue;
+            int add = Math.min(max - s.getCount(), remaining);
+            s.setCount(s.getCount() + add);
+            remaining -= add;
+        }
+        // 2) ocupar huecos nuevos hasta el tope
+        while (remaining > 0 && exportBuffer.size() < EXPORT_CAPACITY) {
             int n = Math.min(remaining, max);
             exportBuffer.add(proto.copyWithCount(n));
             remaining -= n;
         }
         setChanged();
+        if (remaining > 0) {
+            com.example.betteradminshop.BetterAdminShop.LOGGER.warn(
+                    "[BetterAdminShop] Recaudación llena en la tienda de {} en {}: "
+                    + "{} unidades de {} no cupieron.",
+                    ownerName, worldPosition, remaining, proto.getHoverName().getString());
+        }
+        return remaining;
     }
 
     // ── Raycast (bandejas por tier + zona de pago + entrega) ─────────────────
@@ -601,7 +804,9 @@ public class PlayerShopBlockEntity extends BlockEntity {
                                   int rotation) {
         PlayerShopSlot slot = getSlot(slotIndex);
         if (slot == null) return "invalid";
-        if (!saleItem.isEmpty() && stock.countOf(saleItem.copyWithCount(1)) <= 0) {
+        ItemStack saleProto = saleItem.copyWithCount(1);
+        if (!saleItem.isEmpty() && stock.countOf(saleProto) <= 0
+                && !stock.isReserved(saleProto)) {
             return "not_in_stock";
         }
         // Nada gratis: un slot a la venta SIEMPRE necesita precio válido.
@@ -735,10 +940,24 @@ public class PlayerShopBlockEntity extends BlockEntity {
     }
 
     /**
+     * Alterna el bloqueo de un slot del stock: reserva su tipo de ítem para que
+     * el hueco no se libere al agotarse ni lo ocupe otro ítem distinto.
+     *
+     * @return null OK; "empty" si el slot no tiene ítem que reservar.
+     */
+    public String toggleStockLock(int stockSlot) {
+        if (!stock.toggleLock(stockSlot)) return "empty";
+        setChanged();
+        syncToClient();
+        return null;
+    }
+
+    /**
      * Purga TODO el stock del ítem del slot seleccionado: sale por el export en
      * cardboards llenas al máximo (9 stacks por caja; tantas como haga falta).
      *
-     * @return null OK; "no_conduit" sin ducto; "empty" slot vacío.
+     * @return null OK; "no_conduit" sin ducto; "empty" slot vacío;
+     *         "full" si la recaudación no tiene hueco para las cajas.
      */
     public String purgeStock(int stockSlot) {
         if (stockSlot < 0 || stockSlot >= StockInventory.SLOTS) return "empty";
@@ -746,7 +965,14 @@ public class PlayerShopBlockEntity extends BlockEntity {
         if (proto.isEmpty()) return "empty";
         if (!hasExportConduit()) return "no_conduit";
 
-        int units = stock.remove(proto, stock.countOf(proto));
+        // Comprobar el hueco ANTES de tocar el stock: 9 stacks por cardboard.
+        int totalUnits = stock.countOf(proto);
+        if (totalUnits <= 0) return "empty";
+        int stacks = (totalUnits + exportStackSize(proto) - 1) / exportStackSize(proto);
+        int boxes = (stacks + 8) / 9;
+        if (exportBuffer.size() + boxes > EXPORT_CAPACITY) return "full";
+
+        int units = stock.remove(proto, totalUnits);
         if (units <= 0) return "empty";
 
         int stackSize = Math.max(1, Math.min(proto.getMaxStackSize(), 99));
@@ -801,8 +1027,10 @@ public class PlayerShopBlockEntity extends BlockEntity {
 
         @Override public ItemStack getStackInSlot(int i) {
             ItemStack p = stock.getItem(i);
-            if (p.isEmpty()) return ItemStack.EMPTY;
-            return p.copyWithCount(Math.max(1, Math.min(stock.getCount(i), p.getMaxStackSize())));
+            int n = stock.getCount(i);
+            // Un slot bloqueado y vacío conserva el prototipo, pero no tiene nada.
+            if (p.isEmpty() || n <= 0) return ItemStack.EMPTY;
+            return p.copyWithCount(Math.min(n, p.getMaxStackSize()));
         }
 
         @Override public ItemStack insertItem(int slotIgnored, ItemStack stack, boolean simulate) {
@@ -828,7 +1056,10 @@ public class PlayerShopBlockEntity extends BlockEntity {
 
     /** Handler del chute de EXPORT: solo extracción de la recaudación/purgas. */
     private final IItemHandler exportHandler = new IItemHandler() {
-        private static final int VIRTUAL_SLOTS = 27;
+        // Toda la recaudación visible al chute: si solo se expusiera una
+        // ventana parcial, el buffer tardaría más en vaciarse y la tienda
+        // llegaría antes al tope.
+        private static final int VIRTUAL_SLOTS = EXPORT_CAPACITY;
 
         @Override public int getSlots() { return VIRTUAL_SLOTS; }
 

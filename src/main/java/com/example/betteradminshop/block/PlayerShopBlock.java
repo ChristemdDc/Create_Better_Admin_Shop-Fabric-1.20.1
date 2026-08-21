@@ -402,6 +402,9 @@ public class PlayerShopBlock extends BaseEntityBlock implements IWrenchable {
                 } else if (result.startsWith("pay:")) {
                     player.displayClientMessage(Component.literal(
                             "§cNo tienes suficientes '" + result.substring(4) + "'."), true);
+                } else if (result.equals("full")) {
+                    player.displayClientMessage(Component.literal(
+                            "§cEsta tienda no puede cobrar: su recaudación está llena."), true);
                 }
                 return InteractionResult.CONSUME;
             }

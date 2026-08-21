@@ -208,6 +208,20 @@ public final class MongoStore {
                                String itemId, String itemName, int quantity,
                                List<PriceLine> price, String priceSummary,
                                long timestampMs, String world, BlockPos pos) {
+        logTransaction(type, transactionId, slotIndex, playerUuid, playerName, itemId, itemName,
+                quantity, price, priceSummary, timestampMs, world, pos, "");
+    }
+
+    /**
+     * Igual que {@link #logTransaction}, indicando el DUEÑO de la tienda de
+     * jugador. Cadena vacía = tienda de administrador.
+     */
+    public void logTransaction(String type, String transactionId, int slotIndex,
+                               String playerUuid, String playerName,
+                               String itemId, String itemName, int quantity,
+                               List<PriceLine> price, String priceSummary,
+                               long timestampMs, String world, BlockPos pos,
+                               String shopOwner) {
         if (!enabled) return;
         submit(() -> {
             List<Document> priceDocs = new ArrayList<>();
@@ -229,6 +243,7 @@ public final class MongoStore {
                     .append("price", priceDocs)
                     .append("priceSummary", priceSummary)
                     .append("timestamp", new Date(timestampMs))
+                    .append("shopOwner", shopOwner == null ? "" : shopOwner)
                     .append("shop", shopLocation(world, pos));
             transactions.replaceOne(Filters.eq("_id", doc.get("_id")), doc,
                     new ReplaceOptions().upsert(true));

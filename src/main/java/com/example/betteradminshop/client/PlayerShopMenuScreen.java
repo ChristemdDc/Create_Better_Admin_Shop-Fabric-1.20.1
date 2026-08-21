@@ -29,7 +29,8 @@ import java.util.Set;
  * Vistas:
  *  - MAIN: los dos estantes (slots según tier + botón de mejora por lado),
  *    popup de opciones por slot, estado de renta, accesos a Stock y Jugadores.
- *  - STOCK: inventario de 16 slots con mejoras de capacidad/vacío y purga.
+ *  - STOCK: inventario de 16 slots con mejoras de capacidad/vacío, purga y
+ *    bloqueo de slot (reserva el tipo de ítem aunque se agote).
  *  - PICK_ITEM: elegir ítem del stock para ponerlo a la venta.
  *  - PICK_PRICE: panel compacto (no ocupa toda la pantalla) con buscador @/#
  *    y cantidad para fijar el precio.
@@ -442,24 +443,34 @@ public class PlayerShopMenuScreen extends Screen {
             int col = i % 8, row = i / 8;
             int x = gx + col * (size + gap), y = gy + row * (size + gap + 10);
             boolean hov = in(mx, my, x, y, size, size);
-            g.fill(x, y, x + size, y + size,
-                    stockSelected == i ? COL_SLOT_SEL : (hov ? COL_SLOT_HOVER : COL_SLOT_BG));
-            border(g, x, y, size, size, stockSelected == i ? COL_GOLD : COL_BORDER);
-
             ItemStack proto = stock.getItem(i);
             int count = stock.getCount(i);
+            boolean lockedSlot = stock.isLocked(i);
+
+            g.fill(x, y, x + size, y + size,
+                    stockSelected == i ? COL_SLOT_SEL : (hov ? COL_SLOT_HOVER : COL_SLOT_BG));
+            border(g, x, y, size, size, stockSelected == i ? COL_GOLD
+                    : (lockedSlot ? COL_ACCENT : COL_BORDER));
+
             if (!proto.isEmpty()) {
                 g.renderItem(proto, x + 13, y + 6);
+                // Reservado en seco: se apaga el ítem para que no parezca stock real.
+                if (count <= 0) g.fill(x + 13, y + 6, x + 29, y + 22, 0xA0261A10);
                 String c = count >= 1000 ? String.format("%.1fk", count / 1000.0) : String.valueOf(count);
-                g.drawCenteredString(font, c, x + size / 2, y + size - 12, COL_CREAM);
+                g.drawCenteredString(font, c, x + size / 2, y + size - 12,
+                        count <= 0 ? COL_RED : COL_CREAM);
                 // barra de llenado
                 int barW = (int) ((size - 6) * Math.min(1f, count / (float) cap));
                 g.fill(x + 3, y + size - 3, x + 3 + barW, y + size - 1,
                         count >= cap ? COL_RED : COL_GREEN);
-                if (hov) tooltip(proto.getHoverName().getString() + " · " + count + "/" + cap, mx, my);
+                if (hov) {
+                    tooltip(proto.getHoverName().getString() + " · " + count + "/" + cap
+                            + (lockedSlot ? " · §6slot bloqueado" : ""), mx, my);
+                }
             } else if (hov) {
                 tooltip("Slot libre · entra por el chute de import", mx, my);
             }
+            if (lockedSlot) g.drawString(font, "🔒", x + 2, y + 2, COL_GOLD, false);
         }
 
         // ── Panel de acciones (abajo) ────────────────────────────────────────
@@ -516,23 +527,58 @@ public class PlayerShopMenuScreen extends Screen {
             }
         }
 
-        // Purga del slot seleccionado
+        // Purga y bloqueo del slot seleccionado
         int px = left + W / 2 + 20, pyy = ay + 10;
         if (stockSelected >= 0 && !stock.getItem(stockSelected).isEmpty()) {
             ItemStack sel = stock.getItem(stockSelected);
+            boolean lockedSel = stock.isLocked(stockSelected);
             g.renderItem(sel, px, pyy);
             g.drawString(font, sel.getHoverName().getString(), px + 20, pyy + 4, COL_CREAM, false);
-            String purge = "⚠ Purgar este ítem";
-            int w = font.width(purge) + 14;
-            boolean hov = in(mx, my, px, pyy + 22, w, 16);
-            g.fill(px, pyy + 22, px + w, pyy + 38, hov ? COL_ACCENT : COL_ACCENT_DARK);
-            g.drawString(font, purge, px + 7, pyy + 26, COL_CREAM, false);
-            if (hov) {
-                tooltip("Vacía TODO el stock de este ítem por el chute de export en cardboards. "
-                        + "Requiere un ducto/tolva conectado.", mx, my);
+
+            if (stock.getCount(stockSelected) > 0) {
+                String purge = "⚠ Purgar este ítem";
+                int w = font.width(purge) + 14;
+                boolean hov = in(mx, my, px, pyy + 22, w, 16);
+                g.fill(px, pyy + 22, px + w, pyy + 38, hov ? COL_ACCENT : COL_ACCENT_DARK);
+                g.drawString(font, purge, px + 7, pyy + 26, COL_CREAM, false);
+                if (hov) {
+                    tooltip("Vacía TODO el stock de este ítem por el chute de export en cardboards. "
+                            + "Requiere un ducto/tolva conectado.", mx, my);
+                }
+            } else {
+                g.drawString(font, "Sin unidades · hueco reservado", px, pyy + 26,
+                        COL_CREAM_DIM, false);
+            }
+
+            String lock = lockedSel ? "🔒 Bloqueado" : "🔓 Bloquear slot";
+            int lw = font.width(lock) + 14;
+            boolean lhov = in(mx, my, px, pyy + 42, lw, 16);
+            g.fill(px, pyy + 42, px + lw, pyy + 58, lhov ? COL_ACCENT : COL_PANEL_LIGHT);
+            border(g, px, pyy + 42, lw, 16, lockedSel ? COL_GOLD : COL_BORDER);
+            g.drawString(font, lock, px + 7, pyy + 46, COL_CREAM, false);
+            if (lhov) {
+                tooltip(lockedSel
+                        ? "El hueco queda reservado a este ítem aunque se agote · clic para DESBLOQUEAR"
+                        : "Reserva el hueco para este ítem: al agotarse no se libera ni lo ocupa otro", mx, my);
             }
         } else {
-            g.drawString(font, "Selecciona un slot para purgarlo", px, pyy + 8, COL_CREAM_DIM, false);
+            g.drawString(font, "Selecciona un slot del stock", px, pyy + 8, COL_CREAM_DIM, false);
+        }
+
+        // Medidor de recaudación: si se llena, la tienda deja de vender.
+        int used = shop.getExportBuffer().size();
+        int capMax = PlayerShopBlockEntity.EXPORT_CAPACITY;
+        // Columna izquierda, bajo la mejora de vacío: la derecha la ocupan
+        // el botón de purga y el de bloqueo.
+        int rx = left + 20, ry = ay + 58;
+        int col = used >= capMax ? COL_RED : (used >= capMax * 3 / 4 ? COL_GOLD : COL_CREAM_DIM);
+        String label = "Recaudación: " + used + "/" + capMax;
+        g.drawString(font, label, rx, ry, col, false);
+        if (in(mx, my, rx, ry, font.width(label), 9)) {
+            tooltip(used >= capMax
+                    ? "§cLlena: la tienda no puede cobrar. Vacíala por el chute de export."
+                    : "Lo cobrado espera aquí a salir por el chute de export. Si se llena, la tienda deja de vender.",
+                    mx, my);
         }
     }
 
@@ -1000,8 +1046,14 @@ public class PlayerShopMenuScreen extends Screen {
         if (stockSelected >= 0 && !stock.getItem(stockSelected).isEmpty()) {
             int px = left + W / 2 + 20, pyy = ay + 10;
             String purge = "⚠ Purgar este ítem";
-            if (in(mx, my, px, pyy + 22, font.width(purge) + 14, 16)) {
+            if (stock.getCount(stockSelected) > 0
+                    && in(mx, my, px, pyy + 22, font.width(purge) + 14, 16)) {
                 PlayerShopNetworking.sendPurge(shopPos, stockSelected);
+                return true;
+            }
+            String lock = stock.isLocked(stockSelected) ? "🔒 Bloqueado" : "🔓 Bloquear slot";
+            if (in(mx, my, px, pyy + 42, font.width(lock) + 14, 16)) {
+                PlayerShopNetworking.sendLockStock(shopPos, stockSelected);
                 return true;
             }
         }
@@ -1352,7 +1404,9 @@ public class PlayerShopMenuScreen extends Screen {
         StockInventory stock = shop.getStock();
         for (int i = 0; i < StockInventory.SLOTS; i++) {
             ItemStack p = stock.getItem(i);
-            if (p.isEmpty() || stock.getCount(i) <= 0) continue;
+            // Los tipos reservados por un slot bloqueado siguen siendo elegibles
+            // aunque estén a 0: el slot de venta solo saldrá "agotado".
+            if (p.isEmpty() || (stock.getCount(i) <= 0 && !stock.isLocked(i))) continue;
             boolean dup = false;
             for (ItemStack o : out) {
                 if (ItemStack.isSameItemSameComponents(o, p)) { dup = true; break; }

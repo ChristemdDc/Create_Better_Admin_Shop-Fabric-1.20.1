@@ -20,11 +20,17 @@ public record PurchaseRecord(
         int    quantity,
         String priceSummary,     // e.g. "5× Diamond, 2× Emerald"
         long   purchaseTimestampUtc,  // System.currentTimeMillis()
-        String transactionType   // "venta" (la tienda vende) o "compra" (la tienda compra)
+        String transactionType,  // "venta" (la tienda vende) o "compra" (la tienda compra)
+        String shopOwner         // dueño de la tienda de jugador; "" = tienda de administrador
 ) {
 
     public boolean isCompra() {
         return "compra".equals(transactionType);
+    }
+
+    /** ¿La transacción ocurrió en una tienda de JUGADOR? */
+    public boolean isPlayerShop() {
+        return shopOwner != null && !shopOwner.isBlank();
     }
 
     // ── Network codec (manual to handle >6 fields) ───────────────────────────
@@ -43,6 +49,7 @@ public record PurchaseRecord(
                             buf.readVarInt(),
                             readStr(buf),
                             buf.readLong(),
+                            readStr(buf),
                             readStr(buf)
                     );
                 }
@@ -59,6 +66,7 @@ public record PurchaseRecord(
                     writeStr(buf, r.priceSummary());
                     buf.writeLong(r.purchaseTimestampUtc());
                     writeStr(buf, r.transactionType() == null ? "venta" : r.transactionType());
+                    writeStr(buf, r.shopOwner() == null ? "" : r.shopOwner());
                 }
 
                 private static String readStr(RegistryFriendlyByteBuf buf) {

@@ -362,6 +362,9 @@ public class AdminRecordsScreen extends Screen {
         lines.add(Component.literal("§7Ítem: §f" + resolveItemName(r) + " §8(" + r.itemId() + ")"));
         lines.add(Component.literal("§7Cantidad: §a" + r.quantity()));
         lines.add(Component.literal((compra ? "§7Pagado: §e" : "§7Precio: §e") + r.priceSummary()));
+        lines.add(Component.literal(r.isPlayerShop()
+                ? "§7Tienda: §6de " + r.shopOwner()
+                : "§7Tienda: §fde administrador"));
         g.renderComponentTooltip(font, lines, mx, my);
     }
 

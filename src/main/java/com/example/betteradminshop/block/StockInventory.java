@@ -17,6 +17,10 @@ import net.minecraft.world.item.ItemStack;
  *
  * Mejora "vacío" (void): si está activa, los ítems que entren por el chute de
  * import cuando su stock está lleno se DESCARTAN en vez de rebotar.
+ *
+ * Slots BLOQUEADOS: un slot bloqueado RESERVA su tipo de ítem. Aunque el
+ * contador baje a 0 el prototipo se queda ahí, así que ningún otro ítem puede
+ * ocupar el hueco y solo se puede rellenar con el mismo ítem.
  */
 public class StockInventory {
 
@@ -28,6 +32,8 @@ public class StockInventory {
     /** Prototipos (count 1). EMPTY = slot libre. */
     private final ItemStack[] items = new ItemStack[SLOTS];
     private final int[] counts = new int[SLOTS];
+    /** Slots bloqueados: conservan su prototipo aunque el contador llegue a 0. */
+    private final boolean[] locked = new boolean[SLOTS];
 
     private int capacityTier = 0;
     /** ¿La mejora de vacío está COMPRADA? */
@@ -57,6 +63,44 @@ public class StockInventory {
 
     public ItemStack getItem(int slot) { return items[slot]; }
     public int getCount(int slot) { return counts[slot]; }
+
+    public boolean isLocked(int slot) {
+        return slot >= 0 && slot < SLOTS && locked[slot];
+    }
+
+    /**
+     * Alterna el bloqueo de un slot.
+     *
+     * Bloquear reserva el ítem que hay ahora en el slot: al agotarse el stock
+     * el prototipo NO se borra, así que el hueco sigue siendo suyo y solo
+     * admite ese mismo ítem. Desbloquear un slot ya vacío libera la reserva.
+     *
+     * @return true si el estado cambió (false: slot inválido o vacío sin reserva).
+     */
+    public boolean toggleLock(int slot) {
+        if (slot < 0 || slot >= SLOTS) return false;
+        if (locked[slot]) {
+            locked[slot] = false;
+            // Estaba reservado en seco: al soltar el candado el hueco queda libre.
+            if (counts[slot] <= 0) items[slot] = ItemStack.EMPTY;
+            return true;
+        }
+        if (items[slot].isEmpty()) return false; // no hay tipo que reservar
+        locked[slot] = true;
+        return true;
+    }
+
+    /** ¿Hay algún slot bloqueado que reserve este tipo de ítem? */
+    public boolean isReserved(ItemStack proto) {
+        if (proto.isEmpty()) return false;
+        for (int i = 0; i < SLOTS; i++) {
+            if (locked[i] && !items[i].isEmpty()
+                    && ItemStack.isSameItemSameComponents(items[i], proto)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /** Total de unidades disponibles de un ítem (suma de todos sus slots). */
     public int countOf(ItemStack proto) {
@@ -141,8 +185,9 @@ public class StockInventory {
                 counts[i] -= take;
                 taken += take;
                 if (counts[i] <= 0) {
-                    items[i] = ItemStack.EMPTY;
                     counts[i] = 0;
+                    // Un slot bloqueado conserva su ítem: sigue reservado.
+                    if (!locked[i]) items[i] = ItemStack.EMPTY;
                 }
             }
         }
@@ -152,7 +197,7 @@ public class StockInventory {
     /** Vacía por completo un slot concreto. @return unidades que contenía. */
     public int clearSlot(int slot) {
         int n = counts[slot];
-        items[slot] = ItemStack.EMPTY;
+        if (!locked[slot]) items[slot] = ItemStack.EMPTY;
         counts[slot] = 0;
         return n;
     }
@@ -166,11 +211,13 @@ public class StockInventory {
         tag.putBoolean("VoidEnabled", voidEnabled);
         ListTag list = new ListTag();
         for (int i = 0; i < SLOTS; i++) {
-            if (items[i].isEmpty() || counts[i] <= 0) continue;
+            // Un slot bloqueado se guarda aunque esté a 0: la reserva persiste.
+            if (items[i].isEmpty() || (counts[i] <= 0 && !locked[i])) continue;
             CompoundTag e = new CompoundTag();
             e.putInt("Slot", i);
             e.put("Item", items[i].save(provider)); // prototipo count 1: nunca >99
             e.putInt("Count", counts[i]);
+            if (locked[i]) e.putBoolean("Locked", true);
             list.add(e);
         }
         tag.put("Entries", list);
@@ -184,6 +231,7 @@ public class StockInventory {
         for (int i = 0; i < SLOTS; i++) {
             items[i] = ItemStack.EMPTY;
             counts[i] = 0;
+            locked[i] = false;
         }
         ListTag list = tag.getList("Entries", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
@@ -194,6 +242,7 @@ public class StockInventory {
             if (proto.isEmpty()) continue;
             items[slot] = proto.copyWithCount(1);
             counts[slot] = Math.max(0, e.getInt("Count"));
+            locked[slot] = e.getBoolean("Locked");
         }
     }
 }

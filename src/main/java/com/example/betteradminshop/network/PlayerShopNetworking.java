@@ -120,6 +120,16 @@ public final class PlayerShopNetworking {
         @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
     }
 
+    /** Alterna el bloqueo (reserva de tipo) de un slot del stock. */
+    public record LockStock(BlockPos pos, int stockSlot) implements CustomPacketPayload {
+        public static final Type<LockStock> TYPE = new Type<>(BetterAdminShop.id("pshop_lock_stock"));
+        public static final StreamCodec<RegistryFriendlyByteBuf, LockStock> STREAM_CODEC = StreamCodec.composite(
+                BlockPos.STREAM_CODEC, LockStock::pos,
+                ByteBufCodecs.VAR_INT, LockStock::stockSlot,
+                LockStock::new);
+        @Override public Type<? extends CustomPacketPayload> type() { return TYPE; }
+    }
+
     /** add=true: value = nombre del jugador · add=false: value = UUID a quitar. */
     public record Manager(BlockPos pos, boolean add, String value) implements CustomPacketPayload {
         public static final Type<Manager> TYPE = new Type<>(BetterAdminShop.id("pshop_manager"));
@@ -192,6 +202,7 @@ public final class PlayerShopNetworking {
         r.playToServer(RotateSlot.TYPE, RotateSlot.STREAM_CODEC, PlayerShopNetworking::handleRotateSlot);
         r.playToServer(Upgrade.TYPE, Upgrade.STREAM_CODEC, PlayerShopNetworking::handleUpgrade);
         r.playToServer(Purge.TYPE, Purge.STREAM_CODEC, PlayerShopNetworking::handlePurge);
+        r.playToServer(LockStock.TYPE, LockStock.STREAM_CODEC, PlayerShopNetworking::handleLockStock);
         r.playToServer(Manager.TYPE, Manager.STREAM_CODEC, PlayerShopNetworking::handleManager);
         r.playToServer(PayRent.TYPE, PayRent.STREAM_CODEC, PlayerShopNetworking::handlePayRent);
         // Panel de configuración de administración (Fase 5)
@@ -314,6 +325,24 @@ public final class PlayerShopNetworking {
         } else if (result.equals("no_conduit")) {
             player.displayClientMessage(Component.literal(
                     "§cDebes conectar un ducto/tolva al chute de export para poder purgar."), true);
+        } else if (result.equals("full")) {
+            player.displayClientMessage(Component.literal(
+                    "§cLa recaudación está llena: vacíala antes de purgar."), true);
+        }
+    }
+
+    private static void handleLockStock(LockStock msg, IPayloadContext ctx) {
+        PlayerShopBlockEntity shop = managedShop(ctx, msg.pos());
+        if (shop == null || !(ctx.player() instanceof ServerPlayer player)) return;
+        boolean wasLocked = shop.getStock().isLocked(msg.stockSlot());
+        String result = shop.toggleStockLock(msg.stockSlot());
+        if (result == null) {
+            player.displayClientMessage(Component.literal(wasLocked
+                    ? "§eSlot desbloqueado."
+                    : "§a¡Slot bloqueado! Solo admitirá ese ítem."), true);
+        } else {
+            player.displayClientMessage(Component.literal(
+                    "§cNo hay ningún ítem en ese slot que bloquear."), true);
         }
     }
 
@@ -384,6 +413,10 @@ public final class PlayerShopNetworking {
 
     public static void sendPurge(BlockPos pos, int stockSlot) {
         PacketDistributor.sendToServer(new Purge(pos, stockSlot));
+    }
+
+    public static void sendLockStock(BlockPos pos, int stockSlot) {
+        PacketDistributor.sendToServer(new LockStock(pos, stockSlot));
     }
 
     public static void sendManager(BlockPos pos, boolean add, String value) {
