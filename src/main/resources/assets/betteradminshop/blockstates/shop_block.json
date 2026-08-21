@@ -1,8 +1,20 @@
 {
   "variants": {
-    "facing=north": { "model": "betteradminshop:block/shop_block" },
-    "facing=south": { "model": "betteradminshop:block/shop_block", "y": 180 },
-    "facing=west": { "model": "betteradminshop:block/shop_block", "y": 270 },
-    "facing=east": { "model": "betteradminshop:block/shop_block", "y": 90 }
+    "facing=north,part=origin": { "model": "betteradminshop:block/shop_block" },
+    "facing=south,part=origin": { "model": "betteradminshop:block/shop_block", "y": 180 },
+    "facing=west,part=origin": { "model": "betteradminshop:block/shop_block", "y": 270 },
+    "facing=east,part=origin": { "model": "betteradminshop:block/shop_block", "y": 90 },
+    "facing=north,part=right": { "model": "betteradminshop:block/shop_block" },
+    "facing=south,part=right": { "model": "betteradminshop:block/shop_block", "y": 180 },
+    "facing=west,part=right": { "model": "betteradminshop:block/shop_block", "y": 270 },
+    "facing=east,part=right": { "model": "betteradminshop:block/shop_block", "y": 90 },
+    "facing=north,part=top": { "model": "betteradminshop:block/shop_block" },
+    "facing=south,part=top": { "model": "betteradminshop:block/shop_block", "y": 180 },
+    "facing=west,part=top": { "model": "betteradminshop:block/shop_block", "y": 270 },
+    "facing=east,part=top": { "model": "betteradminshop:block/shop_block", "y": 90 },
+    "facing=north,part=top_right": { "model": "betteradminshop:block/shop_block" },
+    "facing=south,part=top_right": { "model": "betteradminshop:block/shop_block", "y": 180 },
+    "facing=west,part=top_right": { "model": "betteradminshop:block/shop_block", "y": 270 },
+    "facing=east,part=top_right": { "model": "betteradminshop:block/shop_block", "y": 90 }
   }
 }

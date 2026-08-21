@@ -1,0 +1,34 @@
+{
+  "multipart": [
+    { "when": { "part": "origin", "facing": "north" }, "apply": { "model": "betteradminshop:block/player_shop" } },
+    { "when": { "part": "origin", "facing": "south" }, "apply": { "model": "betteradminshop:block/player_shop", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west" }, "apply": { "model": "betteradminshop:block/player_shop", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east" }, "apply": { "model": "betteradminshop:block/player_shop", "y": 90 } },
+
+    { "when": { "part": "origin", "facing": "north", "left_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_izq_2" } },
+    { "when": { "part": "origin", "facing": "south", "left_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_izq_2", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "left_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_izq_2", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "left_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_izq_2", "y": 90 } },
+    { "when": { "part": "origin", "facing": "north", "left_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_izq_3" } },
+    { "when": { "part": "origin", "facing": "south", "left_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_izq_3", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "left_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_izq_3", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "left_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_izq_3", "y": 90 } },
+    { "when": { "part": "origin", "facing": "north", "left_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_izq_4" } },
+    { "when": { "part": "origin", "facing": "south", "left_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_izq_4", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "left_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_izq_4", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "left_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_izq_4", "y": 90 } },
+
+    { "when": { "part": "origin", "facing": "north", "right_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_der_2" } },
+    { "when": { "part": "origin", "facing": "south", "right_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_der_2", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "right_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_der_2", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "right_tier": "2" }, "apply": { "model": "betteradminshop:block/player_shop_der_2", "y": 90 } },
+    { "when": { "part": "origin", "facing": "north", "right_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_der_3" } },
+    { "when": { "part": "origin", "facing": "south", "right_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_der_3", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "right_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_der_3", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "right_tier": "3" }, "apply": { "model": "betteradminshop:block/player_shop_der_3", "y": 90 } },
+    { "when": { "part": "origin", "facing": "north", "right_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_der_4" } },
+    { "when": { "part": "origin", "facing": "south", "right_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_der_4", "y": 180 } },
+    { "when": { "part": "origin", "facing": "west", "right_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_der_4", "y": 270 } },
+    { "when": { "part": "origin", "facing": "east", "right_tier": "4" }, "apply": { "model": "betteradminshop:block/player_shop_der_4", "y": 90 } }
+  ]
+}

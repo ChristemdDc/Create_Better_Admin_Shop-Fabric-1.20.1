@@ -1,0 +1,11 @@
+{
+  "desk_bell": {
+    "category": "block",
+    "sounds": [
+      {
+        "name": "betteradminshop:desk_bell",
+        "type": "file"
+      }
+    ]
+  }
+}

@@ -1,4 +1,9 @@
 {
   "block.betteradminshop.shop_block": "Shop",
-  "itemGroup.betteradminshop.main": "Create: Better Admin Shop"
+  "itemGroup.betteradminshop.main": "Create: Better Admin Shop",
+  "key.categories.betteradminshop": "Create: Better Admin Shop",
+  "key.betteradminshop.toggle_boxes": "Toggle shop selection boxes",
+  "block.betteradminshop.player_shop": "Player Shop",
+  "item.betteradminshop.shop_package": "Shop Package",
+  "entity.betteradminshop.shop_package": "Shop Package"
 }
